@@ -134,7 +134,7 @@ class TradingSystem:
         self.marker = StockMarker(self.historical_manager, self.config)
         
         # 6. Breakout Engine
-        self.breakout_engine = BreakoutEngine(self.marker, self.symbol_manager, self.config)
+        self.breakout_engine = BreakoutEngine(self.marker, self.symbol_manager, self.config, self.candle_builder)
         
         # 7. Risk Manager
         self.risk_manager = RiskManager(self.portfolio, self.symbol_manager, self.config)
@@ -264,10 +264,7 @@ class TradingSystem:
         logger.info("FETCHING HISTORICAL DATA")
         logger.info("=" * 60)
         
-        self.historical_manager.fetch_all_historical_data(
-            days=HISTORICAL_DAYS,
-            max_workers=10
-        )
+        self.historical_manager.fetch_all_historical_data(days=HISTORICAL_DAYS)
         
         logger.info("✓ Historical data ready")
     
@@ -314,14 +311,14 @@ def main():
     # Phase 1: Fetch historical data (before 9:15)
     current_time = datetime.now().time()
     
-    if current_time < MARKET_OPEN_TIME:
-        logger.info(f"Current time: {current_time.strftime('%H:%M:%S')} (Before market open)")
+    if current_time < MARKET_OPEN_TIME or current_time > MARKET_CLOSE_TIME:
+        logger.info(f"Current time: {current_time.strftime('%H:%M:%S')} (outside market hours)")
         logger.info("Fetching historical data...")
         system.fetch_historical_data()
         
         # Wait until market opens
         logger.info("Waiting for market to open at 9:15 AM...")
-        while datetime.now().time() < MARKET_OPEN_TIME:
+        while datetime.now().time() < MARKET_OPEN_TIME or datetime.now().time() > MARKET_CLOSE_TIME:
             time_module.sleep(1)
     
     # Phase 2: Start live trading

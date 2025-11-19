@@ -24,6 +24,7 @@ BREAKOUT_BUFFER_PERCENT = 0.05  # Buffer above high for breakout (to avoid false
 MARKET_OPEN_TIME = time(9, 15, 0)
 FIRST_CANDLE_CLOSE_TIME = time(9, 16, 0)
 MARKET_CLOSE_TIME = time(15, 30, 0)
+API_RATE_LIMIT = 3  # requests per second
 
 # Pre-market data fetch time (run before 9:15)
 PREMARKET_FETCH_TIME = time(9, 0, 0)

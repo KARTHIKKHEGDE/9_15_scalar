@@ -7,6 +7,7 @@ import logging
 from typing import Dict, Optional, Callable
 from datetime import datetime
 import threading
+from core.candles import CandleBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -16,10 +17,11 @@ class BreakoutEngine:
     Executes entries with minimal latency
     """
     
-    def __init__(self, marker, symbol_manager, config):
+    def __init__(self, marker, symbol_manager, config, candle_builder):
         self.marker = marker
         self.symbol_manager = symbol_manager
         self.config = config
+        self.candle_builder = candle_builder  # NEW: Add candle builder reference
         
         # Track last price for each marked symbol (token -> price)
         self.last_prices: Dict[int, float] = {}
@@ -73,33 +75,41 @@ class BreakoutEngine:
         if price >= breakout_level:
             self._trigger_breakout(symbol, price)
     
-    def _trigger_breakout(self, symbol: str, entry_price: float):
-        """
-        Trigger breakout entry
-        CRITICAL: This must execute FAST
-        """
-        # Mark as triggered to prevent duplicate entries
-        self.breakout_triggered[symbol] = True
-        self.breakouts_detected += 1
-        
-        # Get stop loss
-        stoploss = self.marker.get_stoploss_level(symbol)
-        
-        # Get candle details for logging
-        candle = self.marker.get_first_candle(symbol)
-        
-        logger.info(f"🚀 BREAKOUT: {symbol} @ {entry_price:.2f} | SL: {stoploss:.2f} | 9:15 High: {candle.high:.2f}")
-        
-        # Execute entry via callback (non-blocking)
-        if self.on_breakout:
-            try:
-                self.on_breakout(symbol, entry_price, stoploss)
-            except Exception as e:
-                logger.error(f"Error in breakout callback for {symbol}: {e}")
-        
-        # Unmark symbol (no longer need to monitor)
-        self.marker.unmark_symbol(symbol)
+def _trigger_breakout(self, symbol: str, entry_price: float):
+    """
+    Trigger breakout entry
+    CRITICAL: This must execute FAST
+    """
+    # Mark as triggered to prevent duplicate entries
+    self.breakout_triggered[symbol] = True
+    self.breakouts_detected += 1
     
+    # Get stop loss from CURRENT breakout candle's open
+    stoploss = self.candle_builder.get_current_candle_open(symbol)
+    
+    # Fallback: If current candle open not available, use 9:15 candle open
+    if stoploss is None or stoploss == 0:
+        stoploss = self.marker.get_stoploss_level(symbol)
+        logger.warning(f"{symbol}: Using 9:15 candle open as SL (breakout candle open not available)")
+    
+    # Get 9:15 candle details for logging
+    first_candle = self.marker.get_first_candle(symbol)
+    
+    logger.info(
+        f"🚀 BREAKOUT: {symbol} @ {entry_price:.2f} | "
+        f"SL: {stoploss:.2f} (Breakout Candle Open) | "
+        f"9:15 High: {first_candle.high:.2f}"
+    )
+    
+    # Execute entry via callback (non-blocking)
+    if self.on_breakout:
+        try:
+            self.on_breakout(symbol, entry_price, stoploss)
+        except Exception as e:
+            logger.error(f"Error in breakout callback for {symbol}: {e}")
+    
+    # Unmark symbol (no longer need to monitor)
+    self.marker.unmark_symbol(symbol)
     def get_last_price(self, symbol: str) -> Optional[float]:
         """Get last known price for symbol"""
         token = self.symbol_manager.get_token(symbol)

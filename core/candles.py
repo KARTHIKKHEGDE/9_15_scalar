@@ -52,6 +52,7 @@ class CandleBuilder:
         # Current minute tracker
         self.current_minute: Optional[time] = None
     
+    
     def set_on_candle_close_callback(self, callback: Callable[[Candle], None]):
         """Set callback function to be called when candle closes"""
         self.on_candle_close = callback
@@ -151,8 +152,26 @@ class CandleBuilder:
                 return self.active_candles.get(token)
         return None
     
+    def get_current_candle_open(self, symbol: str) -> Optional[float]:
+        """
+        Get the open price of the currently building candle
+        Used for setting stop-loss at breakout candle's open
+        Returns None if no active candle exists
+        """
+        token = self.symbol_manager.get_token(symbol)
+        if not token:
+            return None
+        
+        with self.lock:
+            candle_data = self.active_candles.get(token)
+            if candle_data:
+                return candle_data['open']
+    
+        return None
+    
     def force_close_candles(self):
         """Force close all active candles (for testing/emergency)"""
         if self.current_minute:
             with self.lock:
                 self._close_all_candles(self.current_minute)
+    

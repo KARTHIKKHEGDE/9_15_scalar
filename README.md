@@ -1,284 +1,308 @@
 # 9:15 Breakout Trading System
 
-**Ultra-low-latency algorithmic trading system** for detecting and executing breakout trades based on the first candle (9:15-9:16 AM) of the Indian stock market.
+Ultra-low-latency breakout trading system for Indian equity markets.
 
 ## 🎯 Strategy Overview
 
-1. **Pre-Market (Before 9:15 AM)**: Fetch 14-day average volume/range for all symbols
-2. **9:15-9:16 AM**: Monitor first 1-minute candle formation
-3. **9:16 AM**: Mark symbols that qualify (high volume + good range)
-4. **After 9:16 AM**: Monitor marked symbols for breakout above 9:15 candle high
-5. **Entry**: When price breaks above high (with buffer)
-6. **Stop-Loss**: 9:15 candle open/low
+### Entry Logic
 
-## ⚡ Performance Optimizations
+1. **Pre-Market Analysis** (Before 9:15 AM)
 
-- **Zero-copy tick processing** with in-memory data structures
-- **O(1) lookups** using hashmaps for symbols, tokens, and positions
-- **Single-threaded tick routing** (no context switching overhead)
-- **Parallel historical data fetching** (10 concurrent threads)
-- **WebSocket streaming** for real-time ticks (no polling)
-- **Instant breakout detection** on every tick
-- **Pre-calculated thresholds** before market opens
+   - Fetch 14-day historical data for all symbols
+   - Calculate average volume and range for each symbol
+
+2. **9:15 AM Candle Evaluation**
+   - Wait for first 1-minute candle (9:15-9:16 AM)
+   - Mark symbols that meet criteria:
+     - Volume > 2x 14-day average
+     - Range > 0.5% AND > 14-day average range
+3. **Breakout Detection**
+   - Monitor marked symbols in real-time
+   - Entry when price crosses 9:15 candle high
+   - Buffer: 0.1% above high to avoid false breakouts
+
+### Stop-Loss Logic (Enhanced)
+
+- **Primary**: Breakout candle's **open price**
+  - Uses the open of the candle where breakout occurs
+  - More dynamic, adapts to current market conditions
+- **Fallback**: 9:15 candle's open price
+  - Used when:
+    - No active candle data available
+    - Candle open = 0 (data issue)
+    - Symbol not found in candle builder
+- **Thread-Safe**: Uses existing lock mechanism in CandleBuilder
+
+### Exit Logic
+
+- Stop-loss hit
+- Target hit (Risk:Reward based)
+- Trailing stop-loss (optional)
+- Market close (3:25 PM - square off all positions)
+- Max loss per day reached
+
+## 📊 Position Sizing
+
+- Risk per trade: 1% of capital
+- Position size = (Capital × Risk%) / (Entry - Stoploss)
+- Automatic lot size calculation
+
+## 🏗️ Architecture
+
+### Core Modules
+
+#### 1. Symbol Manager (`core/symbols.py`)
+
+- Loads symbols from CSV
+- Maps symbols to instrument tokens
+- O(1) token lookups
+
+#### 2. Historical Data Manager (`core/historical.py`)
+
+- Fetches 14-day historical data
+- Calculates average volume and range
+- Single-threaded with rate limiting
+
+#### 3. Candle Builder (`core/candles.py`)
+
+- Builds 1-minute candles from ticks
+- Detects candle closes
+- **Stores current candle open for stop-loss calculation**
+- Thread-safe implementation
+- Triggers callbacks on candle close
+
+#### 4. Stock Marker (`core/marker.py`)
+
+- Evaluates 9:15 candle against criteria
+- Marks qualified symbols for monitoring
+- Stores 9:15 candle data as fallback
+- O(1) mark/unmark operations
+
+#### 5. Breakout Engine (`core/breakout.py`)
+
+- Monitors marked symbols for breakout
+- **Uses breakout candle open as stop-loss**
+- **Falls back to 9:15 candle open if needed**
+- Ultra-low-latency execution (<10ms)
+- Prevents duplicate entries
+
+#### 6. Risk Manager (`core/risk.py`)
+
+- Calculates position sizes
+- Monitors stop-loss and targets
+- Implements trailing stop-loss
+- Tracks daily loss limits
+
+#### 7. Portfolio (`core/portfolio.py`)
+
+- Tracks all active positions
+- Calculates real-time PNL
+- Maintains trade statistics
+- Thread-safe operations
+
+#### 8. Order Executor (`core/orders_*.py`)
+
+- **Live Mode**: Real order placement via Zerodha Kite
+- **Dry-Run Mode**: Simulated execution for testing
+- Order status tracking
+
+#### 9. WebSocket Manager (`websocket/ws_manager.py`)
+
+- Real-time tick data streaming
+- Auto-reconnection logic
+- Subscription management
+
+#### 10. Tick Router (`websocket/tick_router.py`)
+
+- Routes ticks to appropriate modules:
+  - Candle Builder (all ticks)
+  - Breakout Engine (marked symbols only)
+  - Risk Manager (active positions only)
+
+### Data Flow
+
+```
+WebSocket Ticks
+    ↓
+Tick Router
+    ↓
+    ├─→ Candle Builder → (stores current candle open)
+    │       ↓
+    │   Candle Close Event
+    │       ↓
+    │   Stock Marker (evaluates & marks)
+    │       ↓
+    ├─→ Breakout Engine (monitors marked symbols)
+    │       ↓
+    │   Breakout Detected
+    │       ↓
+    │   Entry Execution (uses breakout candle open as SL)
+    │       ↓
+    │   Portfolio Updated
+    │       ↓
+    └─→ Risk Manager (monitors active positions)
+            ↓
+        Exit Triggered
+            ↓
+        Exit Execution
+```
+
+### Stop-Loss Calculation Flow
+
+```
+Breakout Detected
+    ↓
+Get Breakout Candle Open from CandleBuilder
+    ↓
+    ├─ Available? → Use as Stop-Loss ✓
+    │
+    └─ Not Available? → Fallback to 9:15 Candle Open
+            ↓
+        Warning Logged
+```
+
+## 🚀 Performance Optimizations
+
+1. **O(1) Lookups**
+
+   - Token-to-symbol mappings
+   - Symbol-to-token mappings
+   - Marked symbols tracking
+
+2. **Minimal Latency**
+
+   - Direct tick processing (no queues)
+   - Selective routing (only relevant modules)
+   - Fast breakout detection (<10ms)
+
+3. **Thread Safety**
+
+   - Locks only where necessary
+   - Lock-free reads where possible
+   - Atomic operations for critical sections
+
+4. **Memory Efficient**
+   - In-memory candle storage (cleared after close)
+   - Efficient tick data structures
+   - Minimal historical data retention
 
 ## 📁 Project Structure
 
 ```
 9_15_breakout_system/
-│
 ├── config/
-│   ├── settings.py              # Strategy parameters, risk settings
-│   └── secrets.env              # Zerodha API credentials
+│   ├── settings.py          # All configuration parameters
+│   ├── secrets.env          # API credentials (gitignored)
+│   └── token_generator.py   # Helper to generate access tokens
 │
 ├── core/
-│   ├── symbols.py               # Symbol/token management (O(1) lookups)
-│   ├── historical.py            # 14-day data fetcher (parallel)
-│   ├── candles.py               # 1-min candle builder (real-time)
-│   ├── marker.py                # Qualify stocks at 9:15 close
-│   ├── breakout.py              # Breakout detection engine
-│   ├── risk.py                  # Stop-loss & position sizing
-│   ├── orders_live.py           # Live order execution (Zerodha)
-│   ├── orders_dryrun.py         # Paper trading simulator
-│   ├── trade_logger.py          # CSV trade logging
-│   ├── portfolio.py             # Position & PNL tracking
-│   └── utils.py                 # Helper functions
+│   ├── symbols.py           # Symbol management
+│   ├── historical.py        # Historical data fetching
+│   ├── candles.py          # Real-time candle building
+│   ├── marker.py           # Stock marking logic
+│   ├── breakout.py         # Breakout detection & execution
+│   ├── risk.py             # Risk management
+│   ├── portfolio.py        # Position tracking
+│   ├── orders_live.py      # Live order execution
+│   ├── orders_dryrun.py    # Simulated execution
+│   ├── trade_logger.py     # CSV logging
+│   └── utils.py            # Utility functions
 │
 ├── websocket/
-│   ├── tick_router.py           # Route ticks to engines
-│   └── ws_manager.py            # WebSocket connection manager
+│   ├── ws_manager.py       # WebSocket connection manager
+│   └── tick_router.py      # Tick routing logic
 │
-├── main.py                      # Central orchestrator
-├── symbols.csv                  # Symbols to trade
+├── data/
+│   ├── symbols.csv         # List of symbols to trade
+│   └── trades/             # Trade logs (generated)
 │
-└── output/
-    ├── trades_YYYYMMDD.csv     # Daily trade logs
-    └── logs/                    # System logs
+├── main.py                 # Main orchestrator
+└── README.md              # This file
 ```
 
-## 🚀 Quick Start
+## 🔧 Configuration
 
-### 1. Install Dependencies
-
-```bash
-pip install kiteconnect python-dotenv numpy
-```
-
-### 2. Setup Credentials
-
-Copy the template and add your Zerodha credentials:
-
-```bash
-cp config/secrets.env.template config/secrets.env
-```
-
-Edit `config/secrets.env`:
-```bash
-API_KEY=your_api_key
-API_SECRET=your_api_secret
-ACCESS_TOKEN=your_access_token
-```
-
-### 3. Configure Strategy
-
-Edit `config/settings.py`:
+Edit `config/settings.py` to customize:
 
 ```python
 # Capital & Risk
 TOTAL_CAPITAL = 100000
 RISK_PER_TRADE_PERCENT = 1.0
 MAX_TRADES_PER_DAY = 5
+MAX_LOSS_PER_DAY = 3000
 
-# Strategy Parameters
-VOLUME_MULTIPLIER = 2.0          # Volume must be 2x of 14-day avg
-MIN_CANDLE_RANGE_PERCENT = 0.5   # Minimum 0.5% range
-BREAKOUT_BUFFER_PERCENT = 0.05   # 0.05% buffer above high
+# Entry Criteria
+VOLUME_MULTIPLIER = 2.0
+MIN_CANDLE_RANGE_PERCENT = 0.5
+BREAKOUT_BUFFER_PERCENT = 0.1
 
-# Trading Mode
-DRY_RUN_MODE = True              # Set False for live trading
+# Execution
+DRY_RUN_MODE = True  # Set False for live trading
+ORDER_TYPE = "MARKET"
+PRODUCT_TYPE = "MIS"  # Intraday
 ```
 
-### 4. Add Symbols
+## 📝 Usage
 
-Edit `symbols.csv`:
-```csv
-symbol
-RELIANCE
-TCS
-INFY
-HDFCBANK
-```
-
-### 5. Run System
-
-**Run before 9:15 AM** to fetch historical data:
+### 1. Setup
 
 ```bash
+# Install dependencies
+pip install kiteconnect pandas numpy python-dotenv
+
+# Configure credentials in config/secrets.env
+API_KEY=your_api_key
+API_SECRET=your_api_secret
+ACCESS_TOKEN=your_access_token
+```
+
+### 2. Generate Access Token (Daily)
+
+```bash
+python config/token_generator.py
+```
+
+### 3. Run System
+
+```bash
+# Dry-run mode (recommended for testing)
+python main.py
+
+# Live trading (change DRY_RUN_MODE = False in settings.py)
 python main.py
 ```
 
-The system will:
-1. Fetch 14-day historical data
-2. Wait until 9:15 AM
-3. Start monitoring live ticks
-4. Execute trades automatically
+### 4. Monitor
 
-## 📊 How It Works
+- Logs show real-time events
+- Trade logs saved in `data/trades/`
+- System statistics printed periodically
 
-### Phase 1: Pre-Market (Before 9:15)
-```
-[main.py] → [historical.py] → Fetch 14-day data for all symbols (parallel)
-                            → Calculate average volume & range
-                            → Store in memory for O(1) access
-```
+## ⚠️ Risk Warnings
 
-### Phase 2: Market Open (9:15 onwards)
-```
-[WebSocket] → Receive ticks
-    ↓
-[tick_router.py] → Route to engines
-    ↓
-    ├─→ [candles.py] → Build 1-min candles
-    │       ↓
-    │   (On 9:16 candle close)
-    │       ↓
-    │   [marker.py] → Check volume & range
-    │       ↓
-    │   (If qualified) → MARK SYMBOL
-    │
-    ├─→ [breakout.py] → Monitor marked symbols
-    │       ↓
-    │   (Price > High?) → TRIGGER ENTRY
-    │       ↓
-    │   [orders_*.py] → Place BUY order
-    │       ↓
-    │   [portfolio.py] → Track position
-    │
-    └─→ [risk.py] → Monitor positions
-            ↓
-        (Price < SL?) → TRIGGER EXIT
-            ↓
-        [orders_*.py] → Place SELL order
-```
+1. **Market Risk**: Past performance doesn't guarantee future results
+2. **Execution Risk**: Slippage and partial fills possible
+3. **Technical Risk**: Internet/API failures can occur
+4. **Capital Risk**: Only trade with capital you can afford to lose
+5. **Testing**: Always test in DRY_RUN mode first
 
-## 🎛️ Configuration Options
+## 📈 Future Enhancements
 
-### Risk Management
-```python
-RISK_PER_TRADE_PERCENT = 1.0     # Risk 1% capital per trade
-MAX_LOSS_PER_DAY = 5000           # Stop trading if loss > 5000
-TRAILING_SL_PERCENT = None        # Set to % for trailing SL
-```
-
-### Entry Criteria
-```python
-VOLUME_MULTIPLIER = 2.0           # 2x volume of 14-day avg
-MIN_CANDLE_RANGE_PERCENT = 0.5    # 0.5% minimum range
-BREAKOUT_BUFFER_PERCENT = 0.05    # Buffer to avoid false breakouts
-```
-
-### Order Execution
-```python
-ORDER_TYPE = "MARKET"             # MARKET or LIMIT
-PRODUCT_TYPE = "MIS"              # MIS or NRML
-SLIPPAGE_PERCENT = 0.1            # Slippage for dry-run
-```
-
-## 📈 Trade Logging
-
-All trades are logged to `output/trades_YYYYMMDD.csv`:
-
-```csv
-timestamp,symbol,action,quantity,price,value,pnl,pnl_percent,reason,order_id
-2025-01-15 09:16:23,RELIANCE,BUY,50,2450.30,122515.00,0,0,BREAKOUT,abc123
-2025-01-15 09:45:12,RELIANCE,SELL,50,2475.80,123790.00,1275.00,1.04,STOP_LOSS,def456
-```
-
-## 🔧 Advanced Features
-
-### Dry-Run Mode (Paper Trading)
-
-Perfect for testing with **realistic simulations**:
-- Slippage modeling
-- Order execution delays
-- Real-time PNL tracking
-
-```python
-DRY_RUN_MODE = True  # in settings.py
-```
-
-### Live Trading
-
-```python
-DRY_RUN_MODE = False  # Switch to live
-```
-
-### Performance Monitoring
-
-```python
-from core.utils import perf_monitor
-
-# System tracks:
-# - Tick processing latency
-# - Candle building speed
-# - Order execution time
-```
-
-## ⚠️ Important Notes
-
-### Latency Considerations
-
-1. **Network Latency**: 10-50ms (depends on ISP)
-2. **Tick Processing**: <1ms (in-memory operations)
-3. **Order Execution**: 50-200ms (Zerodha API)
-4. **Total Entry Latency**: ~100-300ms from breakout detection
-
-### Risk Warnings
-
-- Test thoroughly in **DRY-RUN mode** before live trading
-- Markets can be volatile, especially in first few minutes
-- Always use stop-losses
-- Never risk more than you can afford to lose
-- Past performance doesn't guarantee future results
-
-### Best Practices
-
-1. **Run before 9:15 AM** to fetch historical data
-2. **Monitor first few days** in dry-run mode
-3. **Check internet connection** stability
-4. **Keep capital limits** reasonable
-5. **Review trades daily** in CSV logs
-
-## 🐛 Troubleshooting
-
-### "Symbol not found in NSE instruments"
-- Check symbol spelling in `symbols.csv`
-- Use exact NSE trading symbols (e.g., "HDFCBANK" not "HDFC BANK")
-
-### "WebSocket connection failed"
-- Check internet connectivity
-- Verify API credentials in `secrets.env`
-- Ensure access token is valid (generate new if expired)
-
-### "No historical data available"
-- Zerodha API may have rate limits
-- Reduce number of symbols
-- Increase `max_workers` parameter
-
-### Orders not executing
-- Check if DRY_RUN_MODE is correct
-- Verify sufficient capital
-- Check market hours (9:15-15:30)
-
-## 📞 Support
-
-For issues related to:
-- **Zerodha API**: https://kite.trade/docs
-- **KiteConnect Library**: https://github.com/zerodhatech/pykiteconnect
+- [ ] Multi-timeframe analysis
+- [ ] Machine learning for symbol selection
+- [ ] Advanced order types (limit orders)
+- [ ] Telegram notifications
+- [ ] Web dashboard for monitoring
+- [ ] Backtesting framework
 
 ## 📄 License
 
-This is educational software for learning algorithmic trading. Use at your own risk.
+Private use only. Not for commercial distribution.
 
----
+## 🙋 Support
 
-**Built for speed. Optimized for performance. Ready for breakouts.** ⚡🚀
+For issues or questions, review the code documentation and logs first.
+
+```
+
+```
