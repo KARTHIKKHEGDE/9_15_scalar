@@ -13,7 +13,8 @@ api_credentials.txt
 output/
 logs/
 *.log
-*.csv
+
+# Exclude trade CSVs but keep symbol list
 trades_*.csv
 
 # ============================================
@@ -109,11 +110,16 @@ $RECYCLE.BIN/
 # ============================================
 # TRADING SYSTEM SPECIFIC
 # ============================================
-# Historical data cache
+# Historical data cache (but NOT the symbols.csv!)
 data/historical/
 data/cache/
-*.pickle
-*.pkl
+data/*.pickle
+data/*.pkl
+
+# Keep data/symbols.csv by NOT ignoring it
+# Use negative pattern to force include
+!data/
+!data/symbols.csv
 
 # Backup files
 backup/
@@ -135,12 +141,6 @@ tmp/
 # ============================================
 docs/_build/
 site/
-
-# ============================================
-# MISCELLANEOUS
-# ============================================
-# Compressed files
-*.zip
 *.tar.gz
 *.rar
 
