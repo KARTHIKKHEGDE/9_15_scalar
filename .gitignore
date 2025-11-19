@@ -1,0 +1,148 @@
+# ============================================
+# SENSITIVE FILES - NEVER COMMIT THESE!
+# ============================================
+config/secrets.env
+.env
+*.env
+access_token.txt
+api_credentials.txt
+
+# ============================================
+# OUTPUT FILES
+# ============================================
+output/
+logs/
+*.log
+*.csv
+trades_*.csv
+
+# ============================================
+# PYTHON
+# ============================================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# Distribution / packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# ============================================
+# IDE / EDITOR
+# ============================================
+# VS Code
+.vscode/
+*.code-workspace
+
+# PyCharm
+.idea/
+*.iml
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# ============================================
+# OS SPECIFIC
+# ============================================
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux
+*~
+.directory
+
+# ============================================
+# TRADING SYSTEM SPECIFIC
+# ============================================
+# Historical data cache
+data/historical/
+data/cache/
+*.pickle
+*.pkl
+
+# Backup files
+backup/
+*.backup
+*.bak
+
+# Temporary files
+temp/
+tmp/
+*.tmp
+
+# Database files (if used)
+*.db
+*.sqlite
+*.sqlite3
+
+# ============================================
+# DOCUMENTATION BUILDS
+# ============================================
+docs/_build/
+site/
+
+# ============================================
+# MISCELLANEOUS
+# ============================================
+# Compressed files
+*.zip
+*.tar.gz
+*.rar
+
+# System files
+.Trash-*

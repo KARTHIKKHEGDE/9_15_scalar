@@ -1,0 +1,14 @@
+# 9:15 Breakout Trading System - Dependencies
+
+# Zerodha KiteConnect API
+kiteconnect>=4.0.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# Fast numerical operations
+numpy>=1.24.0
+
+# Optional: For advanced analytics
+# pandas>=2.0.0
+# matplotlib>=3.7.0
