@@ -15,16 +15,14 @@ class RiskManager:
     Executes exits with minimal latency
     """
     
-    def __init__(self, portfolio, symbol_manager, config):
+    def __init__(self, portfolio, symbol_manager, config,marker):
         self.portfolio = portfolio
         self.symbol_manager = symbol_manager
         self.config = config
+        self.marker = marker  # NEW: Add marker reference for getting marked stock count
         
         # Callback for exit execution
         self.on_exit: Optional[Callable[[str, float, str], None]] = None
-        
-        # Trailing stop-loss tracking (symbol -> trailing_sl_price)
-        self.trailing_stops = {}
         
         # Stats
         self.stops_hit = 0
@@ -64,37 +62,10 @@ class RiskManager:
         # Check stop-loss
         if self._check_stoploss(position, price):
             self._trigger_exit(symbol, price, "STOP_LOSS")
-        
-        # Check trailing stop if enabled
-        elif self.config.get('TRAILING_SL_PERCENT'):
-            self._update_trailing_stop(position, price)
-            if self._check_trailing_stop(position, price):
-                self._trigger_exit(symbol, price, "TRAILING_STOP")
     
     def _check_stoploss(self, position, current_price: float) -> bool:
         """Check if stop-loss is hit"""
         return current_price <= position.stoploss
-    
-    def _update_trailing_stop(self, position, current_price: float):
-        """Update trailing stop-loss"""
-        trailing_percent = self.config['TRAILING_SL_PERCENT']
-        
-        # Calculate new trailing stop
-        new_trailing = current_price * (1 - trailing_percent / 100)
-        
-        # Update if price moved up
-        if position.symbol not in self.trailing_stops:
-            self.trailing_stops[position.symbol] = position.stoploss
-        
-        if new_trailing > self.trailing_stops[position.symbol]:
-            self.trailing_stops[position.symbol] = new_trailing
-            logger.debug(f"{position.symbol}: Trailing SL updated to {new_trailing:.2f}")
-    
-    def _check_trailing_stop(self, position, current_price: float) -> bool:
-        """Check if trailing stop is hit"""
-        if position.symbol in self.trailing_stops:
-            return current_price <= self.trailing_stops[position.symbol]
-        return False
     
     def _trigger_exit(self, symbol: str, exit_price: float, reason: str):
         """
@@ -117,29 +88,34 @@ class RiskManager:
                 logger.error(f"Error in exit callback for {symbol}: {e}")
     
     def calculate_position_size(self, symbol: str, entry_price: float, 
-                               stoploss: float) -> int:
+                        stoploss: float) -> int:
         """
-        Calculate position size based on risk
-        Risk = RISK_PER_TRADE_PERCENT of capital
+        Calculate position size based on EQUAL CAPITAL DISTRIBUTION
+        Uses total marked count which stays constant throughout the day
         """
-        risk_amount = self.portfolio.available_capital * (self.config['RISK_PER_TRADE_PERCENT'] / 100)
+        # Get total marked count (stays constant even after breakouts)
+        total_marked = self.marker.get_total_marked_count()
         
-        # Calculate risk per share
-        risk_per_share = entry_price - stoploss
-        
-        if risk_per_share <= 0:
-            logger.warning(f"{symbol}: Invalid risk calculation (SL >= Entry)")
+        if total_marked == 0:
+            logger.warning(f"{symbol}: No stocks marked for trading")
             return 0
         
+        # Divide capital equally among ALL marked stocks
+        capital_per_stock = self.config['TOTAL_CAPITAL'] / total_marked
+        
         # Calculate quantity
-        quantity = int(risk_amount / risk_per_share)
+        quantity = int(capital_per_stock / entry_price)
         
-        # Ensure we have enough capital
-        required_capital = quantity * entry_price
-        if required_capital > self.portfolio.available_capital:
-            quantity = int(self.portfolio.available_capital / entry_price)
+        if quantity == 0:
+            logger.warning(f"{symbol}: Quantity = 0 (price too high for ₹{capital_per_stock:.2f})")
+            return 0
         
-        logger.debug(f"{symbol}: Position size = {quantity} shares (Risk: {risk_amount:.2f})")
+        logger.info(
+            f"{symbol}: Position size = {quantity} shares | "
+            f"Capital allocated: ₹{capital_per_stock:.2f} | "
+            f"Total marked: {total_marked} stocks"
+        )
+        
         return quantity
     
     def check_max_loss(self) -> bool:
@@ -158,6 +134,5 @@ class RiskManager:
     def get_stats(self) -> dict:
         """Get risk management statistics"""
         return {
-            'stops_hit': self.stops_hit,
-            'trailing_stops_active': len(self.trailing_stops)
+            'stops_hit': self.stops_hit
         }

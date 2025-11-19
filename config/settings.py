@@ -8,14 +8,12 @@ from datetime import time
 # TRADING PARAMETERS
 # ============================================
 MAX_TRADES_PER_DAY = 5
-RISK_PER_TRADE_PERCENT = 1.0  # % of capital per trade
 TOTAL_CAPITAL = 100000
 
 # ============================================
 # STRATEGY PARAMETERS
 # ============================================
 VOLUME_MULTIPLIER = 2.0  # Volume must be X times 14-day avg
-MIN_CANDLE_RANGE_PERCENT = 0.5  # Minimum % range for 9:15 candle
 BREAKOUT_BUFFER_PERCENT = 0.05  # Buffer above high for breakout (to avoid false breakouts)
 
 # ============================================
@@ -48,7 +46,6 @@ SLIPPAGE_PERCENT = 0.1
 # ============================================
 # RISK MANAGEMENT
 # ============================================
-TRAILING_SL_PERCENT = None  # Set to number for trailing SL, None to disable
 MAX_LOSS_PER_DAY = 5000  # Stop trading if daily loss exceeds this
 
 # ============================================

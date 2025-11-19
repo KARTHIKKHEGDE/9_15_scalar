@@ -31,6 +31,12 @@ class StockMarker:
         # Track marking stats
         self.total_evaluated = 0
         self.total_marked = 0
+    def get_total_marked_count(self) -> int:
+        """
+        Get total marked count (including already triggered)
+        Use first_candles dict which keeps all marked stocks even after unmark
+        """
+        return len(self.first_candles)  # This never decreases!
     
     def evaluate_and_mark(self, candle: Candle) -> bool:
         """
@@ -63,19 +69,13 @@ class StockMarker:
             logger.debug(f"{symbol}: Volume {volume_ratio:.2f}x (need {self.config['VOLUME_MULTIPLIER']}x)")
             return False
         
-        # Criterion 2: Range check
-        candle_range = candle.range_percent()
-        if candle_range < self.config['MIN_CANDLE_RANGE_PERCENT']:
-            logger.debug(f"{symbol}: Range {candle_range:.2f}% (need {self.config['MIN_CANDLE_RANGE_PERCENT']}%)")
-            return False
-        
         # All criteria met - MARK IT!
         with self.lock:
             self.marked_symbols.add(symbol)
             self.first_candles[symbol] = candle
             self.total_marked += 1
         
-        logger.info(f"✓ MARKED: {symbol} | Vol: {volume_ratio:.2f}x | Range: {candle_range:.2f}% | High: {candle.high:.2f}")
+        logger.info(f"✓ MARKED: {symbol} | Vol: {volume_ratio:.2f}x | High: {candle.high:.2f}")
         return True
     
     def is_marked(self, symbol: str) -> bool:

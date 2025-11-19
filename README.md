@@ -1,308 +1,362 @@
 # 9:15 Breakout Trading System
 
-Ultra-low-latency breakout trading system for Indian equity markets.
+Ultra-low-latency automated trading system for NSE equity breakout strategies. Optimized for millisecond-level execution with equal capital distribution across marked stocks.
 
-## 🎯 Strategy Overview
+## 🎯 System Overview
 
-### Entry Logic
+This system implements a **first-minute breakout strategy** that:
 
-1. **Pre-Market Analysis** (Before 9:15 AM)
-
-   - Fetch 14-day historical data for all symbols
-   - Calculate average volume and range for each symbol
-
-2. **9:15 AM Candle Evaluation**
-   - Wait for first 1-minute candle (9:15-9:16 AM)
-   - Mark symbols that meet criteria:
-     - Volume > 2x 14-day average
-     - Range > 0.5% AND > 14-day average range
-3. **Breakout Detection**
-   - Monitor marked symbols in real-time
-   - Entry when price crosses 9:15 candle high
-   - Buffer: 0.1% above high to avoid false breakouts
-
-### Stop-Loss Logic (Enhanced)
-
-- **Primary**: Breakout candle's **open price**
-  - Uses the open of the candle where breakout occurs
-  - More dynamic, adapts to current market conditions
-- **Fallback**: 9:15 candle's open price
-  - Used when:
-    - No active candle data available
-    - Candle open = 0 (data issue)
-    - Symbol not found in candle builder
-- **Thread-Safe**: Uses existing lock mechanism in CandleBuilder
-
-### Exit Logic
-
-- Stop-loss hit
-- Target hit (Risk:Reward based)
-- Trailing stop-loss (optional)
-- Market close (3:25 PM - square off all positions)
-- Max loss per day reached
-
-## 📊 Position Sizing
-
-- Risk per trade: 1% of capital
-- Position size = (Capital × Risk%) / (Entry - Stoploss)
-- Automatic lot size calculation
+- Analyzes the 9:15-9:16 AM candle for all configured stocks
+- Marks stocks meeting volume and range criteria
+- Distributes capital equally among marked stocks
+- Executes breakout trades when price crosses 9:15 candle high
+- Manages risk with dynamic stop-loss at breakout candle's open price
 
 ## 🏗️ Architecture
 
-### Core Modules
-
-#### 1. Symbol Manager (`core/symbols.py`)
-
-- Loads symbols from CSV
-- Maps symbols to instrument tokens
-- O(1) token lookups
-
-#### 2. Historical Data Manager (`core/historical.py`)
-
-- Fetches 14-day historical data
-- Calculates average volume and range
-- Single-threaded with rate limiting
-
-#### 3. Candle Builder (`core/candles.py`)
-
-- Builds 1-minute candles from ticks
-- Detects candle closes
-- **Stores current candle open for stop-loss calculation**
-- Thread-safe implementation
-- Triggers callbacks on candle close
-
-#### 4. Stock Marker (`core/marker.py`)
-
-- Evaluates 9:15 candle against criteria
-- Marks qualified symbols for monitoring
-- Stores 9:15 candle data as fallback
-- O(1) mark/unmark operations
-
-#### 5. Breakout Engine (`core/breakout.py`)
-
-- Monitors marked symbols for breakout
-- **Uses breakout candle open as stop-loss**
-- **Falls back to 9:15 candle open if needed**
-- Ultra-low-latency execution (<10ms)
-- Prevents duplicate entries
-
-#### 6. Risk Manager (`core/risk.py`)
-
-- Calculates position sizes
-- Monitors stop-loss and targets
-- Implements trailing stop-loss
-- Tracks daily loss limits
-
-#### 7. Portfolio (`core/portfolio.py`)
-
-- Tracks all active positions
-- Calculates real-time PNL
-- Maintains trade statistics
-- Thread-safe operations
-
-#### 8. Order Executor (`core/orders_*.py`)
-
-- **Live Mode**: Real order placement via Zerodha Kite
-- **Dry-Run Mode**: Simulated execution for testing
-- Order status tracking
-
-#### 9. WebSocket Manager (`websocket/ws_manager.py`)
-
-- Real-time tick data streaming
-- Auto-reconnection logic
-- Subscription management
-
-#### 10. Tick Router (`websocket/tick_router.py`)
-
-- Routes ticks to appropriate modules:
-  - Candle Builder (all ticks)
-  - Breakout Engine (marked symbols only)
-  - Risk Manager (active positions only)
-
-### Data Flow
-
 ```
-WebSocket Ticks
-    ↓
-Tick Router
-    ↓
-    ├─→ Candle Builder → (stores current candle open)
-    │       ↓
-    │   Candle Close Event
-    │       ↓
-    │   Stock Marker (evaluates & marks)
-    │       ↓
-    ├─→ Breakout Engine (monitors marked symbols)
-    │       ↓
-    │   Breakout Detected
-    │       ↓
-    │   Entry Execution (uses breakout candle open as SL)
-    │       ↓
-    │   Portfolio Updated
-    │       ↓
-    └─→ Risk Manager (monitors active positions)
-            ↓
-        Exit Triggered
-            ↓
-        Exit Execution
-```
-
-### Stop-Loss Calculation Flow
-
-```
-Breakout Detected
-    ↓
-Get Breakout Candle Open from CandleBuilder
-    ↓
-    ├─ Available? → Use as Stop-Loss ✓
+┌─────────────────────────────────────────────────────────────┐
+│                        MAIN ORCHESTRATOR                     │
+│  (Coordinates all modules, manages system lifecycle)         │
+└────────────┬────────────────────────────────────────────────┘
+             │
+    ┌────────┴────────┐
+    │                 │
+┌───▼────┐      ┌────▼─────┐
+│ KITE   │      │ CONFIG   │
+│ CONNECT│      │ MANAGER  │
+└───┬────┘      └──────────┘
     │
-    └─ Not Available? → Fallback to 9:15 Candle Open
-            ↓
-        Warning Logged
+    ├─────────────────────────────────────────────────────────┐
+    │                                                           │
+┌───▼──────────────┐  ┌──────────────────┐  ┌────────────────▼┐
+│ SYMBOL MANAGER   │  │ HISTORICAL DATA  │  │ WEBSOCKET        │
+│ - Token mapping  │  │ - 14-day avg     │  │ - Live ticks     │
+│ - Symbol lookup  │  │ - Volume/Range   │  │ - Reconnection   │
+└───┬──────────────┘  └────┬─────────────┘  └────┬─────────────┘
+    │                      │                      │
+    │                      │                      │
+┌───▼──────────────┐  ┌───▼─────────────┐  ┌────▼─────────────┐
+│ CANDLE BUILDER   │  │ STOCK MARKER     │  │ TICK ROUTER      │
+│ - 1-min candles  │  │ - Mark 9:15      │  │ - Route to       │
+│ - Real-time OHLC │  │ - Filter stocks  │  │   modules        │
+└───┬──────────────┘  └───┬─────────────┘  └────┬─────────────┘
+    │                     │                      │
+    └─────────┬───────────┴──────────────────────┘
+              │
+    ┌─────────┴─────────┐
+    │                   │
+┌───▼─────────────┐  ┌─▼──────────────┐
+│ BREAKOUT ENGINE │  │ RISK MANAGER   │
+│ - Detect break  │  │ - Stop-loss    │
+│ - Equal capital │  │ - Position size│
+└───┬─────────────┘  └─┬──────────────┘
+    │                  │
+    └────────┬─────────┘
+             │
+    ┌────────▼────────┐
+    │ ORDER EXECUTOR  │
+    │ - Live/Dry-run  │
+    │ - Entry/Exit    │
+    └────────┬────────┘
+             │
+    ┌────────▼────────┐
+    │ PORTFOLIO       │
+    │ - Positions     │
+    │ - PNL tracking  │
+    └────────┬────────┘
+             │
+    ┌────────▼────────┐
+    │ TRADE LOGGER    │
+    │ - CSV logging   │
+    │ - Audit trail   │
+    └─────────────────┘
 ```
-
-## 🚀 Performance Optimizations
-
-1. **O(1) Lookups**
-
-   - Token-to-symbol mappings
-   - Symbol-to-token mappings
-   - Marked symbols tracking
-
-2. **Minimal Latency**
-
-   - Direct tick processing (no queues)
-   - Selective routing (only relevant modules)
-   - Fast breakout detection (<10ms)
-
-3. **Thread Safety**
-
-   - Locks only where necessary
-   - Lock-free reads where possible
-   - Atomic operations for critical sections
-
-4. **Memory Efficient**
-   - In-memory candle storage (cleared after close)
-   - Efficient tick data structures
-   - Minimal historical data retention
 
 ## 📁 Project Structure
 
 ```
 9_15_breakout_system/
+├── main.py                      # Main orchestrator
 ├── config/
-│   ├── settings.py          # All configuration parameters
-│   ├── secrets.env          # API credentials (gitignored)
-│   └── token_generator.py   # Helper to generate access tokens
-│
+│   ├── settings.py             # System configuration
+│   ├── secrets.env             # API credentials
+│   ├── token_generator.py      # Access token generator
+│   └── symbols.csv             # Trading universe
 ├── core/
-│   ├── symbols.py           # Symbol management
-│   ├── historical.py        # Historical data fetching
-│   ├── candles.py          # Real-time candle building
-│   ├── marker.py           # Stock marking logic
-│   ├── breakout.py         # Breakout detection & execution
-│   ├── risk.py             # Risk management
-│   ├── portfolio.py        # Position tracking
-│   ├── orders_live.py      # Live order execution
-│   ├── orders_dryrun.py    # Simulated execution
-│   ├── trade_logger.py     # CSV logging
-│   └── utils.py            # Utility functions
-│
+│   ├── symbols.py              # Symbol management
+│   ├── historical.py           # Historical data fetching
+│   ├── candles.py              # 1-minute candle builder
+│   ├── marker.py               # Stock marking logic
+│   ├── breakout.py             # Breakout detection
+│   ├── risk.py                 # Risk management
+│   ├── portfolio.py            # Position tracking
+│   ├── orders_live.py          # Live order execution
+│   ├── orders_dryrun.py        # Simulated orders
+│   ├── trade_logger.py         # Trade logging
+│   └── utils.py                # Utility functions
 ├── websocket/
-│   ├── ws_manager.py       # WebSocket connection manager
-│   └── tick_router.py      # Tick routing logic
-│
+│   ├── ws_manager.py           # WebSocket connection
+│   └── tick_router.py          # Tick distribution
 ├── data/
-│   ├── symbols.csv         # List of symbols to trade
-│   └── trades/             # Trade logs (generated)
-│
-├── main.py                 # Main orchestrator
-└── README.md              # This file
+│   └── trades/                 # Trade logs
+└── README.md
 ```
 
-## 🔧 Configuration
+## 🚀 Features
 
-Edit `config/settings.py` to customize:
+### Core Capabilities
 
-```python
-# Capital & Risk
-TOTAL_CAPITAL = 100000
-RISK_PER_TRADE_PERCENT = 1.0
-MAX_TRADES_PER_DAY = 5
-MAX_LOSS_PER_DAY = 3000
+- ✅ **Equal Capital Distribution**: Capital divided equally among all marked stocks
+- ✅ **Dynamic Position Sizing**: Quantity calculated based on allocated capital per stock
+- ✅ **Dual-Mode Operation**: Live trading and dry-run testing
+- ✅ **Ultra-Low Latency**: Tick-by-tick processing with minimal overhead
+- ✅ **Automatic Token Refresh**: Generate Zerodha access tokens
+- ✅ **Historical Analysis**: 14-day volume and range averages
+- ✅ **Real-time Monitoring**: WebSocket-based live data feed
+- ✅ **Risk Management**: Stop-loss at breakout candle open
+- ✅ **Trade Logging**: Complete audit trail in CSV format
 
-# Entry Criteria
-VOLUME_MULTIPLIER = 2.0
-MIN_CANDLE_RANGE_PERCENT = 0.5
-BREAKOUT_BUFFER_PERCENT = 0.1
+### Stock Selection Criteria (9:15-9:16 AM)
 
-# Execution
-DRY_RUN_MODE = True  # Set False for live trading
-ORDER_TYPE = "MARKET"
-PRODUCT_TYPE = "MIS"  # Intraday
-```
+1. **Volume Filter**: Current volume ≥ (14-day avg × multiplier)
+2. **Range Filter**: Current range % ≥ 14-day avg range %
+3. **Equal Capital**: Total capital / Number of marked stocks
 
-## 📝 Usage
+### Entry Logic
 
-### 1. Setup
+- **Trigger**: Price crosses above 9:15 candle high
+- **Entry Price**: Market price at breakout
+- **Stop Loss**: Open price of the breakout candle
+- **Position Size**: (Capital per stock) / Entry price
+
+### Exit Logic
+
+- **Stop Loss Hit**: Price ≤ Stop loss level
+- **Manual Exit**: User intervention (if needed)
+
+## 📋 Prerequisites
+
+- Python 3.8+
+- Zerodha Kite Connect account
+- Active trading account with API access
+
+## 🔧 Installation
+
+1. **Clone the repository**
 
 ```bash
-# Install dependencies
-pip install kiteconnect pandas numpy python-dotenv
-
-# Configure credentials in config/secrets.env
-API_KEY=your_api_key
-API_SECRET=your_api_secret
-ACCESS_TOKEN=your_access_token
+cd c:\Users\91948\OneDrive\Desktop
+# System is already in: 9_15_breakout_system
 ```
 
-### 2. Generate Access Token (Daily)
+2. **Install dependencies**
+
+```bash
+pip install kiteconnect python-dotenv numpy
+```
+
+3. **Configure API credentials**
+
+   - Edit `config/secrets.env`:
+
+   ```env
+   API_KEY=your_api_key
+   API_SECRET=your_api_secret
+   ACCESS_TOKEN=your_access_token
+   ```
+
+4. **Generate access token**
 
 ```bash
 python config/token_generator.py
 ```
 
-### 3. Run System
+5. **Configure symbols**
+
+   - Edit `config/symbols.csv` with your trading universe
+
+   ```csv
+   symbol
+   RELIANCE
+   TCS
+   INFY
+   ```
+
+6. **Adjust settings**
+   - Edit `config/settings.py` for capital, risk parameters, etc.
+
+## 🎮 Usage
+
+### Basic Operation
 
 ```bash
-# Dry-run mode (recommended for testing)
-python main.py
-
-# Live trading (change DRY_RUN_MODE = False in settings.py)
+# Run the system (will fetch historical data and wait for market open)
 python main.py
 ```
 
-### 4. Monitor
+### System Workflow
 
-- Logs show real-time events
-- Trade logs saved in `data/trades/`
-- System statistics printed periodically
+1. **Pre-Market (Before 9:15 AM)**
 
-## ⚠️ Risk Warnings
+   - Fetches 14-day historical data
+   - Calculates average volumes and ranges
+   - Waits for market open
 
-1. **Market Risk**: Past performance doesn't guarantee future results
-2. **Execution Risk**: Slippage and partial fills possible
-3. **Technical Risk**: Internet/API failures can occur
-4. **Capital Risk**: Only trade with capital you can afford to lose
-5. **Testing**: Always test in DRY_RUN mode first
+2. **9:15-9:16 AM**
 
-## 📈 Future Enhancements
+   - Builds first-minute candle for all symbols
+   - Evaluates and marks qualifying stocks
+   - Distributes capital equally among marked stocks
 
-- [ ] Multi-timeframe analysis
-- [ ] Machine learning for symbol selection
-- [ ] Advanced order types (limit orders)
-- [ ] Telegram notifications
-- [ ] Web dashboard for monitoring
-- [ ] Backtesting framework
+3. **Post 9:16 AM**
 
-## 📄 License
+   - Monitors marked stocks for breakout
+   - Executes entries when price crosses 9:15 high
+   - Sets stop-loss at breakout candle's open
+   - Manages positions with real-time risk monitoring
 
-Private use only. Not for commercial distribution.
+4. **Position Management**
+   - Tracks all open positions
+   - Monitors stop-loss levels tick-by-tick
+   - Executes exits on stop-loss hit
+   - Logs all trades to CSV
 
-## 🙋 Support
+## ⚙️ Configuration
 
-For issues or questions, review the code documentation and logs first.
+### Key Settings (config/settings.py)
 
+```python
+# Capital Management
+TOTAL_CAPITAL = 100000          # Total capital
+MAX_TRADES_PER_DAY = 5          # Maximum concurrent positions
+
+# Marking Criteria
+VOLUME_MULTIPLIER = 1.5         # Volume must be 1.5x 14-day avg
+# Range must exceed 14-day avg
+
+# Risk Management
+MAX_LOSS_PER_DAY = 2000        # Max daily loss limit
+
+# Execution
+DRY_RUN_MODE = True            # True = Paper trading, False = Live
+ORDER_TYPE = "MARKET"          # Market orders
+PRODUCT_TYPE = "MIS"           # Intraday
 ```
 
+## 📊 Example Trade Flow
+
 ```
+1. Market opens at 9:15 AM
+2. System analyzes first minute (9:15-9:16)
+
+   Stock: RELIANCE
+   - 9:15 Open: 2500, High: 2520, Low: 2495, Close: 2515
+   - Volume: 150,000 (14-day avg: 100,000)
+   - Range: 1.0% (14-day avg: 0.8%)
+   ✅ MARKED (meets criteria)
+
+   Stock: TCS
+   - Volume too low
+   ❌ NOT MARKED
+
+3. Capital Distribution
+   - 3 stocks marked: RELIANCE, INFY, HDFCBANK
+   - Capital per stock: ₹100,000 / 3 = ₹33,333
+
+4. Breakout Detection
+   - RELIANCE crosses 2520 at 9:25 AM
+   - Entry: ₹2522 (market price)
+   - Quantity: 33,333 / 2522 = 13 shares
+   - Stop Loss: ₹2518 (9:25 candle open)
+
+5. Exit
+   - Stop loss hit at ₹2518
+   - Exit executed
+   - Loss: (2522 - 2518) × 13 = ₹52
+```
+
+## 📈 Performance Monitoring
+
+The system provides real-time statistics:
+
+```
+=============================================================
+SYSTEM STATISTICS
+=============================================================
+Capital: ₹100,000.00 | PNL: ₹+1,250.00
+Trades: 3 | Active: 1
+Win Rate: 66.7%
+Marked: 5/50
+Breakouts: 3
+```
+
+## 🔍 Trade Logs
+
+All trades are logged to CSV files in `data/trades/`:
+
+```csv
+timestamp,symbol,side,quantity,price,order_id,pnl,reason
+2024-01-15 09:25:30,RELIANCE,BUY,13,2522.00,123456,,
+2024-01-15 10:45:15,RELIANCE,SELL,13,2518.00,123457,-52.00,STOP_LOSS
+```
+
+## 🛡️ Risk Management
+
+- **Position Sizing**: Equal capital distribution prevents over-concentration
+- **Stop Loss**: Automatic exit at breakout candle open
+- **Max Loss**: System stops trading if daily loss exceeds limit
+- **Max Positions**: Limits concurrent trades
+
+## ⚠️ Important Notes
+
+1. **Market Timing**: Run before 9:15 AM to fetch historical data
+2. **API Rate Limits**: Historical data fetch respects Zerodha limits (3 req/sec)
+3. **WebSocket**: Auto-reconnects on disconnection
+4. **Dry-Run Testing**: Always test in dry-run mode first
+5. **Capital Management**: Ensure sufficient funds for all potential entries
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+**WebSocket disconnects**
+
+- System auto-reconnects
+- Check internet connectivity
+
+**No stocks marked**
+
+- Lower VOLUME_MULTIPLIER in settings
+- Check if symbols.csv has valid symbols
+
+**Orders not executing**
+
+- Verify DRY_RUN_MODE setting
+- Check Zerodha account status
+- Verify ACCESS_TOKEN is valid
+
+**Historical data errors**
+
+- Run token_generator.py to refresh token
+- Check symbols.csv format
+- Verify API credentials
+
+## 📝 License
+
+This is a personal trading system. Use at your own risk.
+
+## ⚠️ Disclaimer
+
+**This system is for educational purposes only. Trading involves substantial risk.**
+
+- Past performance does not guarantee future results
+- Always test thoroughly in dry-run mode
+- Start with small capital
+- Monitor system performance closely
+- Understand all risks before live trading
+
+---
+
+**Built with**: Python, Kite Connect API, WebSocket
+**Optimized for**: Ultra-low latency, Real-time execution

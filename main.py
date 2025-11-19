@@ -62,17 +62,14 @@ class TradingSystem:
         # Create config dictionary
         self.config = {
             'MAX_TRADES_PER_DAY': MAX_TRADES_PER_DAY,
-            'RISK_PER_TRADE_PERCENT': RISK_PER_TRADE_PERCENT,
             'TOTAL_CAPITAL': TOTAL_CAPITAL,
             'VOLUME_MULTIPLIER': VOLUME_MULTIPLIER,
-            'MIN_CANDLE_RANGE_PERCENT': MIN_CANDLE_RANGE_PERCENT,
             'BREAKOUT_BUFFER_PERCENT': BREAKOUT_BUFFER_PERCENT,
             'DRY_RUN_MODE': DRY_RUN_MODE,
             'ORDER_TYPE': ORDER_TYPE,
             'PRODUCT_TYPE': PRODUCT_TYPE,
             'EXCHANGE': EXCHANGE,
             'SLIPPAGE_PERCENT': SLIPPAGE_PERCENT,
-            'TRAILING_SL_PERCENT': TRAILING_SL_PERCENT,
             'MAX_LOSS_PER_DAY': MAX_LOSS_PER_DAY,
             'OUTPUT_DIR': OUTPUT_DIR,
             'TRADES_CSV_PREFIX': TRADES_CSV_PREFIX,
@@ -137,11 +134,11 @@ class TradingSystem:
         self.breakout_engine = BreakoutEngine(self.marker, self.symbol_manager, self.config, self.candle_builder)
         
         # 7. Risk Manager
-        self.risk_manager = RiskManager(self.portfolio, self.symbol_manager, self.config)
+        self.risk_manager = RiskManager(self.portfolio, self.symbol_manager, self.config, self.marker)
         
         # 8. Order Executor
         if DRY_RUN_MODE:
-            self.order_executor = DryRunOrderExecutor(self.symbol_manager, self.config)
+            self.order_executor = DryRunOrderExecutor(self.symbol_manager, self.config,self.breakout_engine)
             logger.info("✓ Dry-run order executor initialized")
         else:
             self.order_executor = LiveOrderExecutor(self.kite, self.symbol_manager, self.config)
