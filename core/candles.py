@@ -59,56 +59,55 @@ class CandleBuilder:
         """Set callback function to be called when candle closes"""
         self.on_candle_close = callback
     
-def process_tick(self, tick: dict):
-    """
-    Process incoming tick with minimal latency
-    tick format: {
-        'instrument_token': int,
-        'last_price': float,
-        'volume': int,
-        'timestamp': datetime,
-        ...
-    }
-    """
-    token = tick['instrument_token']
-    price = tick['last_price']
-    volume = tick.get('volume', 0)  # Cumulative volume
-    timestamp = tick['timestamp']
-    
-    # Get current minute
-    current_min = timestamp.replace(second=0, microsecond=0)
-    
-    with self.lock:
-        # Check if minute has changed (candle close)
-        if self.current_minute and current_min > self.current_minute:
-            self._close_all_candles(self.current_minute)
+    def process_tick(self, tick: dict):  # ← FIX INDENTATION (inside class)
+        """
+        Process incoming tick with minimal latency
+        tick format: {
+            'instrument_token': int,
+            'last_price': float,
+            'volume': int (CUMULATIVE since market open),
+            'timestamp': datetime,
+            ...
+        }
+        """
+        token = tick['instrument_token']
+        price = tick['last_price']
+        volume = tick.get('volume', 0)  # Cumulative volume since 9:15 AM
+        timestamp = tick['timestamp']
         
-        self.current_minute = current_min
+        # Get current minute
+        current_min = timestamp.replace(second=0, microsecond=0)
         
-        # Calculate THIS candle's volume (delta from previous candle)
-        prev_vol = self.previous_volume.get(token, 0)
-        candle_volume = volume - prev_vol  # Volume for this minute only
-        
-        # Update or create candle
-        if token not in self.active_candles:
-            # New candle
-            self.active_candles[token] = {
-                'open': price,
-                'high': price,
-                'low': price,
-                'close': price,
-                'volume': candle_volume,  # Store minute's volume
-                'cumulative_volume': volume,  # Also store cumulative
-                'first_tick_time': timestamp
-            }
-        else:
-            # Update existing candle
-            candle = self.active_candles[token]
-            candle['high'] = max(candle['high'], price)
-            candle['low'] = min(candle['low'], price)
-            candle['close'] = price
-            candle['cumulative_volume'] = volume  # Update cumulative
-            # Note: volume stays as calculated at candle creation
+        with self.lock:
+            # Check if minute has changed (candle close)
+            if self.current_minute and current_min > self.current_minute:
+                self._close_all_candles(self.current_minute)
+            
+            self.current_minute = current_min
+            
+            # Update or create candle
+            if token not in self.active_candles:
+                # NEW CANDLE - Calculate volume for this minute
+                prev_vol = self.previous_volume.get(token, 0)
+                candle_volume = volume - prev_vol  # Delta from previous candle
+                
+                self.active_candles[token] = {
+                    'open': price,
+                    'high': price,
+                    'low': price,
+                    'close': price,
+                    'volume': candle_volume,       # Store this minute's volume
+                    'cumulative_volume': volume,   # Also store cumulative
+                    'first_tick_time': timestamp
+                }
+            else:
+                # UPDATE EXISTING CANDLE
+                candle = self.active_candles[token]
+                candle['high'] = max(candle['high'], price)
+                candle['low'] = min(candle['low'], price)
+                candle['close'] = price
+                candle['cumulative_volume'] = volume  # Keep updating cumulative
+                # Note: candle['volume'] stays as initially calculated (delta)
     
     def _close_all_candles(self, minute: datetime):
         """
