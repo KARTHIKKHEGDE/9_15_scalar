@@ -138,7 +138,7 @@ class TradingSystem:
         
         # 8. Order Executor
         if DRY_RUN_MODE:
-            self.order_executor = DryRunOrderExecutor(self.symbol_manager, self.config,self.breakout_engine)
+            self.order_executor = DryRunOrderExecutor(self.symbol_manager, self.config, self.breakout_engine)
             logger.info("✓ Dry-run order executor initialized")
         else:
             self.order_executor = LiveOrderExecutor(self.kite, self.symbol_manager, self.config)

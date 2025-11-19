@@ -15,7 +15,7 @@ class RiskManager:
     Executes exits with minimal latency
     """
     
-    def __init__(self, portfolio, symbol_manager, config,marker):
+    def __init__(self, portfolio, symbol_manager, config, marker):
         self.portfolio = portfolio
         self.symbol_manager = symbol_manager
         self.config = config
