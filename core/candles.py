@@ -66,15 +66,15 @@ class CandleBuilder:
             'instrument_token': int,
             'last_price': float,
             'volume': int (CUMULATIVE since market open),
-            'timestamp': datetime,
+            'exchange_timestamp': datetime,  # Zerodha uses this key
             ...
         }
         """
         token = tick['instrument_token']
         price = tick['last_price']
-        volume = tick.get('volume', 0)  # Cumulative volume since 9:15 AM
-        timestamp = tick['timestamp']
-        
+        volume = tick.get('volume_traded', 0)  # Cumulative volume since 9:15 AM
+        # Zerodha WebSocket uses 'exchange_timestamp' or 'last_trade_time'
+        timestamp = tick.get('exchange_timestamp') or tick.get('last_trade_time')
         # Get current minute
         current_min = timestamp.replace(second=0, microsecond=0)
         
