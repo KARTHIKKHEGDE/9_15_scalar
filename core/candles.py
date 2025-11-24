@@ -150,6 +150,22 @@ class CandleBuilder:
         token = self.symbol_manager.get_token(symbol)
         if token:
             return self.completed_candles.get(token)
+            # Trigger callback
+        if self.on_candle_close:
+            try:
+                self.on_candle_close(completed)
+            except Exception as e:
+                    logger.error(f"Error in candle close callback for {symbol}: {e}")
+        
+        # Clear active candles for next minute
+        self.active_candles.clear()
+        logger.debug(f"Closed {len(self.completed_candles)} candles for minute {minute.strftime('%H:%M')}")
+    
+    def get_candle(self, symbol: str) -> Optional[Candle]:
+        """Get last completed candle for symbol - O(1)"""
+        token = self.symbol_manager.get_token(symbol)
+        if token:
+            return self.completed_candles.get(token)
         return None
     
     def get_active_candle_data(self, symbol: str) -> Optional[dict]:
