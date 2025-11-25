@@ -180,7 +180,7 @@ class TradingSystem:
         self.risk_manager.set_on_exit_callback(on_exit)
         
         # WebSocket -> Tick Router
-        self.ws_manager.set_on_ticks_callback(self.tick_router.route_ticks)
+        self.ws_manager.bind_tick_router(self.tick_router.enqueue_ticks)
         
         logger.info("✓ Callbacks configured")
     

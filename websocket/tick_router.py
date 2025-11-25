@@ -1,79 +1,113 @@
 # websocket/tick_router.py
 """
-Ultra-low-latency tick routing
-Routes ticks to candle builder, breakout engine, and risk manager
-Optimized for sub-millisecond processing
+Ultra-low-latency tick router with threaded queue processing.
+Ensures WebSocket thread stays non-blocking while tick processing
+runs in a dedicated worker thread.
 """
+
 import logging
-from typing import List
+from typing import List, Dict
 from datetime import datetime, time
+import queue
+import threading
 
 logger = logging.getLogger(__name__)
 
+
 class TickRouter:
     """
-    Routes incoming ticks to appropriate engines
-    Single-threaded for maximum speed (no context switching)
+    High-performance tick router.
+
+    NEW ARCHITECTURE:
+    -----------------
+    ✔ WebSocket thread → puts ticks into Queue (fast)
+    ✔ Worker thread → consumes queue & routes ticks (heavy processing)
+    ✔ Non-blocking & scalable
     """
-    
+
     def __init__(self, candle_builder, breakout_engine, risk_manager):
         self.candle_builder = candle_builder
         self.breakout_engine = breakout_engine
         self.risk_manager = risk_manager
-        
-        # Performance tracking
-        self.ticks_processed = 0
-        self.last_tick_time = None
-        
+
+        # Queue for incoming ticks (high capacity)
+        self.tick_queue: queue.Queue[List[Dict]] = queue.Queue(maxsize=5000)
+
         # Market hours
         self.market_open = time(9, 15, 0)
         self.market_close = time(15, 30, 0)
-    
-    def route_ticks(self, ticks: List[dict]):
+
+        # Stats
+        self.ticks_processed = 0
+
+        # Start worker thread
+        worker = threading.Thread(target=self._worker_loop, daemon=True)
+        worker.start()
+        logger.info("✓ TickRouter worker thread started")
+
+    # ---------------------------------------------------------
+    # Called by WebSocket on_ticks callback
+    # ---------------------------------------------------------
+    def enqueue_ticks(self, ticks: List[dict]):
         """
-        Route batch of ticks to all engines
-        Called by WebSocket on_ticks callback
-        
-        CRITICAL: This is the HOT PATH - optimize heavily
-        """
-        if not ticks:
-            return
-        
-        current_time = datetime.now().time()
-        
-        # Only process during market hours
-        if not (self.market_open <= current_time <= self.market_close):
-            return
-        
-        # Process each tick
-        for tick in ticks:
-            self._route_single_tick(tick)
-        
-        self.ticks_processed += len(ticks)
-    
-    def _route_single_tick(self, tick: dict):
-        """
-        Route single tick to all engines
-        ULTRA CRITICAL: Keep this as fast as possible
+        Insert tick batch into queue.
+        Non-blocking. If queue is full, drop ticks to save CPU.
         """
         try:
-            # 1. Candle Builder (always update candles)
+            self.tick_queue.put_nowait(ticks)
+        except queue.Full:
+            logger.warning("⚠ Tick queue FULL — dropping ticks to avoid lag")
+
+    # ---------------------------------------------------------
+    # Worker thread continuously processes ticks
+    # ---------------------------------------------------------
+    def _worker_loop(self):
+        while True:
+            ticks = self.tick_queue.get()  # blocking but extremely fast
+            try:
+                self._process_tick_batch(ticks)
+            except Exception as e:
+                logger.error(f"Tick worker error: {e}", exc_info=True)
+
+    # ---------------------------------------------------------
+    # Process a batch of ticks
+    # ---------------------------------------------------------
+    def _process_tick_batch(self, ticks: List[dict]):
+        if not ticks:
+            return
+
+        current_time = datetime.now().time()
+        if not (self.market_open <= current_time <= self.market_close):
+            return
+
+        for tick in ticks:
+            self._route_single_tick(tick)
+
+        self.ticks_processed += len(ticks)
+
+    # ---------------------------------------------------------
+    # Route ONE tick
+    # ---------------------------------------------------------
+    def _route_single_tick(self, tick: dict):
+        try:
+            # Candle Builder
             self.candle_builder.process_tick(tick)
-            
-            # 2. Breakout Engine (only for marked symbols)
+
+            # Breakout Engine
             self.breakout_engine.process_tick(tick)
-            
-            # 3. Risk Manager (only for active positions)
+
+            # Risk Manager
             self.risk_manager.process_tick(tick)
-            
+
         except Exception as e:
-            # Log but don't crash on single tick error
-            logger.error(f"Error routing tick: {e}", exc_info=True)
-    
+            logger.error(f"⚠ Tick routing exception: {e}", exc_info=True)
+
+    # ---------------------------------------------------------
+    # Stats helper
+    # ---------------------------------------------------------
     def get_stats(self) -> dict:
-        """Get routing statistics"""
         return {
-            'ticks_processed': self.ticks_processed,
-            'candles_active': len(self.candle_builder.active_candles),
-            'marked_symbols': len(self.breakout_engine.marker.marked_symbols)
+            "ticks_processed": self.ticks_processed,
+            "active_candles": len(self.candle_builder.active_candles),
+            "marked_symbols": len(self.breakout_engine.marker.marked_symbols),
         }
