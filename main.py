@@ -2,7 +2,6 @@
 """
 9:15 Breakout Trading System - Main Orchestrator
 Ultra-low-latency execution with modular design
-
 Run before 9:15 AM to prepare data
 System automatically starts trading at 9:15 AM
 """
@@ -15,6 +14,7 @@ import time as time_module
 from kiteconnect import KiteConnect
 from dotenv import load_dotenv
 import os
+import signal
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -49,6 +49,7 @@ class TradingSystem:
     """
     
     def __init__(self):
+        self.shutdown_requested = False
         logger.info("=" * 60)
         logger.info("9:15 BREAKOUT TRADING SYSTEM - INITIALIZING")
         logger.info("=" * 60)
@@ -266,7 +267,7 @@ class TradingSystem:
         logger.info("✓ Historical data ready")
     
     def start_trading(self):
-        """Start live trading"""
+        """Start live trading (non-blocking websocket + keep-alive loop)"""
         logger.info("=" * 60)
         logger.info("STARTING LIVE TRADING")
         logger.info("=" * 60)
@@ -275,9 +276,62 @@ class TradingSystem:
         tokens = self.symbol_manager.get_all_tokens()
         self.ws_manager.subscribe(tokens)
         
-        # Start WebSocket (blocking)
-        logger.info("Starting WebSocket connection...")
-        self.ws_manager.start()
+        # Start WebSocket in threaded/non-blocking mode.
+        # Prefer a dedicated start_threaded() if the WS manager exposes it;
+        # otherwise call start(threaded=True).
+        logger.info("Starting WebSocket connection (threaded)...")
+        if hasattr(self.ws_manager, 'start_threaded'):
+            self.ws_manager.start_threaded()
+        else:
+            # attempt to call start with threaded=True (backwards-compatible)
+            try:
+                self.ws_manager.start(threaded=True)
+            except TypeError:
+                # Fallback: call start() but this will block (not desired)
+                logger.warning("WebSocket manager does not support threaded start; calling blocking start(). Consider updating ws_manager.")
+                self.ws_manager.start()
+                return
+        
+        # Keep main thread alive and respond to shutdown requests
+        logger.info("Trading system running. Press Ctrl+C to stop.")
+        try:
+            while not self.shutdown_requested:
+                time_module.sleep(1)
+        except KeyboardInterrupt:
+            logger.info("\n\nShutdown signal received (KeyboardInterrupt).")
+            self.shutdown()
+        except Exception as e:
+            logger.error(f"Error in main keep-alive loop: {e}", exc_info=True)
+            self.shutdown()
+    
+    def shutdown(self):
+        """Gracefully shutdown the trading system"""
+        if self.shutdown_requested:
+            return  # already shutting down
+        logger.info("Shutting down trading system...")
+        self.shutdown_requested = True
+        
+        # Stop WebSocket
+        try:
+            if self.ws_manager:
+                logger.info("Stopping WebSocket...")
+                self.ws_manager.stop()
+        except Exception as e:
+            logger.debug(f"Error stopping WebSocket: {e}")
+        
+        # (Optional) Close all open positions safely if required
+        # try:
+        #     self.portfolio.close_all_positions()
+        # except Exception as e:
+        #     logger.debug(f"Error closing positions: {e}")
+        
+        # Print final stats
+        try:
+            self.print_stats()
+        except Exception as e:
+            logger.debug(f"Error printing stats: {e}")
+        
+        logger.info("✓ Shutdown complete")
     
     def print_stats(self):
         """Print current statistics"""
@@ -299,11 +353,8 @@ class TradingSystem:
         breakout_stats = self.breakout_engine.get_stats()
         logger.info(f"Breakouts: {breakout_stats['breakouts_detected']}")
 
-def main():
+def main(system):
     """Main entry point"""
-    
-    # Initialize system
-    system = TradingSystem()
     
     # Phase 1: Fetch historical data (before 9:15)
     current_time = datetime.now().time()
@@ -323,11 +374,36 @@ def main():
     system.start_trading()
 
 if __name__ == "__main__":
+    trading_system = None
+
+    def _sigint_handler(signum, frame):
+        logger.info("\n\nShutdown requested by user (SIGINT)")
+        # set flag and let the main loop call shutdown
+        try:
+            if trading_system:
+                trading_system.shutdown_requested = True
+            else:
+                # if not initialized, exit immediately
+                sys.exit(0)
+        except Exception:
+            sys.exit(0)
+
+    # Register SIGINT handler so Ctrl+C sets the flag reliably
+    signal.signal(signal.SIGINT, _sigint_handler)
+
     try:
-        main()
+        trading_system = TradingSystem()
+        main(trading_system)
     except KeyboardInterrupt:
-        logger.info("\n\nShutdown requested by user")
+        logger.info("\n\nShutdown requested by user (KeyboardInterrupt)")
+        if trading_system:
+            trading_system.shutdown()
         sys.exit(0)
     except Exception as e:
         logger.critical(f"Fatal error: {e}", exc_info=True)
-        sys.exit(1)
+        # ensure clean shutdown attempt
+        try:
+            if trading_system:
+                trading_system.shutdown()
+        finally:
+            sys.exit(1)

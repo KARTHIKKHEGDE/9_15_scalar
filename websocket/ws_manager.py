@@ -21,6 +21,9 @@ class WebSocketManager:
         self.access_token = access_token
         self.config = config
         
+        # Shutdown flag (CRITICAL)
+        self.shutdown_requested = False
+
         # Initialize ticker
         self.ticker = KiteTicker(api_key, access_token)
         
@@ -41,7 +44,7 @@ class WebSocketManager:
         """Setup KiteTicker callbacks"""
         
         def on_connect(ws, response):
-            logger.info(f"✓ WebSocket connected")
+            logger.info("✓ WebSocket connected")
             self.is_connected = True
             self.reconnect_attempts = 0
             
@@ -54,7 +57,12 @@ class WebSocketManager:
         def on_close(ws, code, reason):
             logger.warning(f"✗ WebSocket closed: {code} - {reason}")
             self.is_connected = False
-            self._attempt_reconnect()
+
+            # Do NOT reconnect if shutdown requested
+            if not self.shutdown_requested:
+                self._attempt_reconnect()
+            else:
+                logger.info("Shutdown requested — skipping reconnection")
         
         def on_error(ws, code, reason):
             logger.error(f"✗ WebSocket error: {code} - {reason}")
@@ -67,10 +75,7 @@ class WebSocketManager:
             self.is_connected = False
         
         def on_ticks(ws, ticks):
-            """
-            CRITICAL: This is the HOT PATH
-            Route ticks immediately with zero delay
-            """
+            """CRITICAL HOT PATH"""
             if self.on_ticks_callback:
                 try:
                     self.on_ticks_callback(ticks)
@@ -90,10 +95,7 @@ class WebSocketManager:
         self.on_ticks_callback = callback
     
     def subscribe(self, tokens: List[int]):
-        """
-        Subscribe to instrument tokens
-        Can be called before or after connection
-        """
+        """Subscribe to instrument tokens"""
         self.subscribed_tokens = tokens
         logger.info(f"Added {len(tokens)} tokens for subscription")
         
@@ -102,33 +104,38 @@ class WebSocketManager:
             self.ticker.subscribe(tokens)
             self.ticker.set_mode(self.ticker.MODE_FULL, tokens)
     
-    def start(self):
-        """Start WebSocket connection (blocking)"""
+    def start(self, threaded=False):
+        """Start WebSocket connection"""
         logger.info("Starting WebSocket connection...")
         try:
-            self.ticker.connect(threaded=False)  # Blocking call
+            self.shutdown_requested = False   # reset on start
+            self.ticker.connect(threaded=threaded)
         except Exception as e:
             logger.error(f"WebSocket connection error: {e}")
             raise
     
     def start_threaded(self):
         """Start WebSocket in separate thread (non-blocking)"""
-        logger.info("Starting WebSocket connection (threaded)...")
-        try:
-            self.ticker.connect(threaded=True)
-        except Exception as e:
-            logger.error(f"WebSocket connection error: {e}")
-            raise
-    
+        self.start(threaded=True)
+
     def stop(self):
         """Stop WebSocket connection"""
         logger.info("Stopping WebSocket...")
-        if self.ticker:
+        self.shutdown_requested = True  # IMPORTANT
+        try:
             self.ticker.close()
+        except:
+            pass
         self.is_connected = False
     
     def _attempt_reconnect(self):
         """Attempt to reconnect WebSocket"""
+        
+        # Do NOT reconnect if shutdown requested
+        if self.shutdown_requested:
+            logger.info("Shutdown requested — skipping reconnection.")
+            return
+        
         max_attempts = self.config.get('WS_RECONNECT_MAX_TRIES', 3)
         delay = self.config.get('WS_RECONNECT_DELAY', 5)
         
@@ -146,5 +153,4 @@ class WebSocketManager:
             logger.error(f"Reconnection failed: {e}")
     
     def is_active(self) -> bool:
-        """Check if WebSocket is connected"""
         return self.is_connected
