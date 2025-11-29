@@ -263,7 +263,38 @@ class TradingSystem:
             )
         
         logger.info(f"✅ EXIT: {symbol} @ {actual_price:.2f} | Reason: {reason} | PNL: {closed_position.realized_pnl:.2f}")
-    
+    def _fetch_and_update_opening_prices(self):
+        """
+        Fetch actual opening prices from Kite API and update 9:15 candles.
+        Called at 9:15:02 in a background thread.
+        """
+        try:
+            logger.info("Fetching actual opening prices for 9:15 candles...")
+            
+            # Get all tokens
+            tokens = self.symbol_manager.get_all_tokens()
+            
+            # Fetch OHLC data from Kite API
+            # This gives us the actual opening price at 9:15:00
+            ohlc_data = self.kite.ohlc(tokens)
+            
+            updated_count = 0
+            for token_str, data in ohlc_data.items():
+                token = int(token_str)
+                symbol = self.symbol_manager.get_symbol(token)
+                
+                if symbol and 'ohlc' in data:
+                    actual_open = data['ohlc']['open']
+                    
+                    # Update the candle builder with correct opening price
+                    self.candle_builder.update_candle_open_price(symbol, actual_open)
+                    updated_count += 1
+            
+            logger.info(f"✓ Updated opening prices for {updated_count} symbols")
+            
+        except Exception as e:
+            logger.error(f"Error fetching opening prices: {e}", exc_info=True)
+
     def fetch_historical_data(self):
         """Fetch 14-day historical data (run before 9:15)"""
         logger.info("=" * 60)
@@ -299,7 +330,33 @@ class TradingSystem:
                 logger.warning("WebSocket manager does not support threaded start; calling blocking start(). Consider updating ws_manager.")
                 self.ws_manager.start()
                 return
-        
+        # Schedule opening price correction at 9:15:02
+        def schedule_opening_price_update():
+            """Wait until 9:15:02, then fetch and update opening prices"""
+            import time as time_module
+            from datetime import datetime, time
+            
+            # Wait until exactly 9:15:02
+            while True:
+                now = datetime.now().time()
+                if now >= time(9, 15, 2) and now < time(9, 15, 10):
+                    # We're in the window, fetch prices
+                    self._fetch_and_update_opening_prices()
+                    break
+                elif now >= time(9, 15, 10):
+                    # Too late, skip
+                    logger.warning("Missed 9:15:02 window for opening price update")
+                    break
+                time_module.sleep(0.1)  # Check every 100ms
+        # Start background thread for opening price update
+        import threading
+        opening_price_thread = threading.Thread(
+            target=schedule_opening_price_update,
+            daemon=True,
+            name="OpeningPriceUpdater"
+        )
+        opening_price_thread.start()
+        logger.info("✓ Opening price updater thread started")
         # Keep main thread alive and respond to shutdown requests
         logger.info("Trading system running. Press Ctrl+C to stop.")
         try:

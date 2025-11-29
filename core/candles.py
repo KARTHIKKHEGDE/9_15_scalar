@@ -205,3 +205,18 @@ class CandleBuilder:
         if self.current_minute:
             with self.lock:
                 self._close_all_candles(self.current_minute)
+
+                
+    def update_candle_open_price(self, symbol: str, correct_open: float):
+        """
+        Update the opening price of the current active candle.
+        Used to correct 9:15 candle opening price with actual market open.
+        """
+        token = self.symbol_manager.get_token(symbol)
+        if not token:
+            return
+        
+        with self.lock:
+            if token in self.active_candles:
+                self.active_candles[token]['open'] = correct_open
+                logger.debug(f"{symbol}: Updated 9:15 candle open to {correct_open:.2f}")
