@@ -365,11 +365,10 @@ This document provides a detailed description of each file, its main classes/fun
 
 ## core/historical.py
 
-- **Purpose:** Fetches and processes historical OHLCV (Open, High, Low, Close, Volume) data for all symbols to compute statistical baselines used in breakout qualification. Calculates 14-day average volume and average range percentage, which are critical for the marker module to identify qualifying stocks at 9:15 AM.
+- **Purpose:** Fetches and processes historical OHLCV (Open, High, Low, Close, Volume) data for all symbols to compute statistical baselines used in breakout qualification. Calculates 14-day average volume, which is critical for the marker module to identify qualifying stocks at 9:15 AM.
 
 - **Key Data Structures:**
   - `avg_volumes: Dict[str, float]` - Maps symbol → 14-day average volume (e.g., {"RELIANCE": 5000000})
-  - `avg_ranges: Dict[str, float]` - Maps symbol → 14-day average range % (e.g., {"RELIANCE": 2.5})
 
 - **Class:** HistoricalDataManager
   
@@ -382,40 +381,24 @@ This document provides a detailed description of each file, its main classes/fun
     - **Usage:** Called once during TradingSystem initialization
   
   - `fetch_single_symbol_data(self, symbol: str, token: int, days: int) -> tuple`:
-    - **Purpose:** Fetches historical data for ONE symbol and calculates its averages.
+    - **Purpose:** Fetches historical data for ONE symbol and calculates its average volume.
     - **Parameters:**
       - `symbol` - Symbol name (for logging)
       - `token` - Instrument token (for API call)
       - `days` - Number of days to fetch (typically 14)
-    - **Returns:** Tuple of `(symbol, avg_volume, avg_range)`
+    - **Returns:** Tuple of `(symbol, avg_volume)`
     - **Logic Flow:**
       1. Calculates date range: `to_date` = yesterday, `from_date` = yesterday - (days + 10 buffer)
       2. Calls `kite.historical_data()` with instrument token, date range, and 'day' interval
       3. Slices last N candles from response (handles cases where less than N days available)
       4. **Volume Calculation:** Extracts volume from each candle, computes mean using numpy
-      5. **Range Calculation:** For each candle, computes `(high - low) / low * 100`, then averages
-      6. Logs warning if fewer than requested days available
-      7. Returns calculated averages (returns 0,0 if no data)
-    - **Error Handling:** Catches API errors, logs error, returns (symbol, 0, 0) to prevent crash
+      5. Logs warning if fewer than requested days available
+      6. Returns calculated average (returns 0 if no data)
+    - **Error Handling:** Catches API errors, logs error, returns (symbol, 0) to prevent crash
     - **Performance:** Single API call per symbol, ~100-200ms per call
   
   - `fetch_all_historical_data(self, days: int = 14)`:
     - **Purpose:** Sequentially fetches historical data for ALL symbols with rate limiting.
-    - **Parameters:** `days` - Number of days for averaging (default: 14)
-    - **Returns:** None (populates internal dictionaries)
-    - **Logic Flow:**
-      1. Logs start of fetch operation with symbol count
-      2. Iterates through all symbols from symbol_manager
-      3. For each symbol:
-         - Gets instrument token via `symbol_manager.get_token()`
-         - Calls `fetch_single_symbol_data()`
-         - **CRITICAL:** Sleeps for `1 / API_RATE_LIMIT` seconds (respects 3 req/sec limit)
-         - If successful (avg_volume > 0), stores in dictionaries
-         - Increments success counter
-      4. Logs completion with success rate and total time
-    - **Rate Limiting:** Uses `time.sleep(1/3)` = 333ms between calls to stay under 3 req/sec limit
-    - **Performance:** For 50 symbols: ~17 seconds (50 * 333ms)
-    - **Thread Safety:** Single-threaded to avoid API rate limit violations
     - **Why Sequential:** Parallel fetching would exceed API rate limits and cause errors
   
   - `get_avg_volume(self, symbol: str) -> float`:
@@ -425,12 +408,7 @@ This document provides a detailed description of each file, its main classes/fun
     - **Usage:** Called by StockMarker during 9:15 candle evaluation to check volume criterion
     - **Performance:** Dictionary lookup = O(1), sub-microsecond
   
-  - `get_avg_range(self, symbol: str) -> float`:
-    - **Purpose:** O(1) lookup for precomputed 14-day average range percentage.
-    - **Parameters:** `symbol` - Symbol name
-    - **Returns:** Average range % (float) or 0 if not available
-    - **Usage:** Called by StockMarker during 9:15 candle evaluation to check range criterion
-    - **Performance:** Dictionary lookup = O(1), sub-microsecond
+
   
   - `is_data_ready(self, symbol: str) -> bool`:
     - **Purpose:** Validates that historical data is available for a symbol before trading.
@@ -559,7 +537,7 @@ This document provides a detailed description of each file, its main classes/fun
 
 - **Key Data Structures:**
   - `marked_symbols: Set[str]` - Thread-safe set of currently marked symbols (actively monitored)
-  - `first_candles: Dict[str, Candle]` - Stores 9:15 candles for marked symbols (never deleted, used for stats)
+  - `marked_candles: Dict[str, Candle]` - Stores 9:15 candles for marked symbols (never deleted, used for stats)
   - `lock: threading.Lock` - Ensures thread-safe modifications to marked_symbols set
 
 - **Class:** StockMarker
@@ -571,13 +549,13 @@ This document provides a detailed description of each file, its main classes/fun
       - `config` - Dictionary with VOLUME_MULTIPLIER and other settings
     - **State Initialization:**
       - Creates empty set for marked_symbols
-      - Creates empty dict for first_candles
+      - Creates empty dict for marked_candles
       - Initializes counters: total_evaluated = 0, total_marked = 0
     - **Thread Safety:** Creates lock for protecting marked_symbols modifications
   
   - `get_total_marked_count(self) -> int`:
     - **Purpose:** Returns total count of stocks marked during the day (including already triggered).
-    - **Returns:** Length of `first_candles` dictionary
+    - **Returns:** Length of `marked_candles` dictionary
     - **Why Important:** Used by RiskManager for equal capital distribution across ALL marked stocks
     - **Key Insight:** This count NEVER decreases during the day (even after breakouts trigger)
     - **Usage:** Called during position sizing to ensure capital is divided equally
@@ -600,7 +578,7 @@ This document provides a detailed description of each file, its main classes/fun
          - **Example:** If avg_volume = 1M and multiplier = 2.0, candle needs ≥2M volume
       5. **All Criteria Met - MARK IT:**
          - Adds symbol to `marked_symbols` set (thread-safe with lock)
-         - Stores candle in `first_candles` dict for later reference
+         - Stores candle in `marked_candles` dict for later reference
          - Increments `total_marked` counter
          - Logs success with volume ratio and high price
       6. Returns True
@@ -614,7 +592,7 @@ This document provides a detailed description of each file, its main classes/fun
     - **Usage:** Called by BreakoutEngine on EVERY tick to filter which symbols to monitor
     - **Performance:** Set membership test = O(1), sub-microsecond
   
-  - `get_first_candle(self, symbol: str) -> Candle`:
+  - `get_marked_candle(self, symbol: str) -> Candle`:
     - **Purpose:** Retrieves the stored 9:15 candle for a marked symbol.
     - **Parameters:** `symbol` - Symbol name
     - **Returns:** Candle object or None
@@ -634,7 +612,7 @@ This document provides a detailed description of each file, its main classes/fun
     - **Parameters:** `symbol` - Symbol name
     - **Returns:** Breakout price (high + buffer) or 0 if not marked
     - **Logic:**
-      1. Gets 9:15 candle from first_candles
+      1. Gets 9:15 candle from marked_candles
       2. Calculates buffer: `candle.high * (BREAKOUT_BUFFER_PERCENT / 100)`
       3. Returns `candle.high + buffer`
     - **Example:** If high = 100 and buffer = 0.05%, breakout level = 100.05
@@ -654,7 +632,7 @@ This document provides a detailed description of each file, its main classes/fun
     - **Logic:** Removes from marked_symbols set using `discard()` (no error if not present)
     - **Thread Safety:** Wrapped in lock
     - **Called By:** BreakoutEngine after breakout is triggered
-    - **Important:** Does NOT remove from first_candles (preserves total count)
+    - **Important:** Does NOT remove from marked_candles (preserves total count)
   
   - `get_stats(self) -> dict`:
     - **Purpose:** Returns marking statistics for reporting.

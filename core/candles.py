@@ -132,13 +132,14 @@ class CandleBuilder:
             # Update Existing Candle
             # --------------------------------------------------------
             else:
+                cumulative_volume = tick.get("volume_traded", 0)
+                prev_vol = self.previous_volume.get(token, 0)
                 candle = self.active_candles[token]
-
                 candle["high"] = max(candle["high"], price)
                 candle["low"] = min(candle["low"], price)
                 candle["close"] = price
-
-                candle["cumulative_volume"] = tick.get("volume_traded", 0)
+                candle["volume"] = max(cumulative_volume - prev_vol, 0)
+                candle["cumulative_volume"] = cumulative_volume
 
     # --------------------------------------------------------
     # Close all candles (at minute change)
@@ -149,10 +150,6 @@ class CandleBuilder:
             symbol = self.symbol_manager.get_symbol(token)
             if not symbol:
                 continue
-
-            # Debug logging removed for performance
-            # logger.debug(f"[CANDLE CLOSE] {symbol}")
-
             completed = Candle(
                 symbol=symbol,
                 timestamp=minute,

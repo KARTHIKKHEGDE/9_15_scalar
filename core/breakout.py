@@ -21,14 +21,14 @@ class BreakoutEngine:
         self.marker = marker
         self.symbol_manager = symbol_manager
         self.config = config
-        self.candle_builder = candle_builder  # NEW: Add candle builder reference
+        self.candle_builder = candle_builder
         
-        # Track last price for each marked symbol (token -> price)
+        # Track last price for ALL symbols (needed for SELL orders too)
         self.last_prices: Dict[int, float] = {}
         self.lock = threading.Lock()
         
         # Breakout detection state
-        self.breakout_triggered: Dict[str, bool] = {}  # symbol -> triggered
+        self.breakout_triggered: Dict[str, bool] = {}
         
         # Callback for entry execution
         self.on_breakout: Optional[Callable[[str, float, float], None]] = None
@@ -56,17 +56,18 @@ class BreakoutEngine:
         if not symbol:
             return
         
-        # Only monitor marked symbols
+        # ALWAYS update last price for ALL symbols (needed for SELL orders)
+        # This ensures we have current market prices even after breakout
+        with self.lock:
+            self.last_prices[token] = price
+        
+        # Only monitor marked symbols for breakout detection
         if not self.marker.is_marked(symbol):
             return
         
         # Check if already triggered
         if symbol in self.breakout_triggered:
             return
-        
-        # Update last price (for monitoring)
-        with self.lock:
-            self.last_prices[token] = price
         
         # Get breakout level
         breakout_level = self.marker.get_breakout_level(symbol)
@@ -93,12 +94,12 @@ class BreakoutEngine:
             logger.warning(f"{symbol}: Using 9:15 candle open as SL (breakout candle open not available)")
         
         # Get 9:15 candle details for logging
-        first_candle = self.marker.get_first_candle(symbol)
+        marked_candle = self.marker.get_marked_candle(symbol)
         
         logger.info(
             f"🚀 BREAKOUT: {symbol} @ {entry_price:.2f} | "
             f"SL: {stoploss:.2f} (Breakout Candle Open) | "
-            f"9:15 High: {first_candle.high:.2f}"
+            f"9:15 High: {marked_candle.high:.2f}"
         )
         
         # Execute entry via callback (non-blocking)
@@ -108,14 +109,18 @@ class BreakoutEngine:
             except Exception as e:
                 logger.error(f"Error in breakout callback for {symbol}: {e}")
         
-        # Unmark symbol (no longer need to monitor)
+        # Unmark symbol (no longer need to monitor for breakout)
+        # But we still update last_prices for this symbol for SELL orders
         self.marker.unmark_symbol(symbol)
         
     def get_last_price(self, symbol: str) -> Optional[float]:
         """Get last known price for symbol"""
         token = self.symbol_manager.get_token(symbol)
         if token:
-            return self.last_prices.get(token)
+            price = self.last_prices.get(token)
+            if price:
+                logger.debug(f"[BREAKOUT_ENGINE] {symbol} last price: {price:.2f}")
+            return price
         return None
     
     def is_breakout_triggered(self, symbol: str) -> bool:

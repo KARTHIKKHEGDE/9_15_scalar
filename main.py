@@ -197,6 +197,8 @@ class TradingSystem:
             logger.critical("Max daily loss reached - stopping trading")
             return
         
+        logger.info(f"[ENTRY_FLOW] {symbol} - Breakout Entry Price: {entry_price:.2f}, Stop Loss: {stoploss:.2f}")
+        
         # Calculate position size
         quantity = self.risk_manager.calculate_position_size(symbol, entry_price, stoploss)
         
@@ -214,6 +216,8 @@ class TradingSystem:
         # Get actual execution price (for dry-run, it's immediate)
         actual_price = self.order_executor.get_average_price(order_id) or entry_price
         
+        logger.info(f"[ENTRY_FLOW] {symbol} - Order Executor Actual Price: {actual_price:.2f}")
+        
         # Add to portfolio
         self.portfolio.add_position(symbol, actual_price, stoploss, quantity)
         
@@ -230,6 +234,8 @@ class TradingSystem:
             logger.warning(f"{symbol}: No position to exit")
             return
         
+        logger.info(f"[EXIT_FLOW] {symbol} - Risk Manager Exit Price: {exit_price:.2f}, Entry Price: {position.entry_price:.2f}")
+        
         # Place exit order
         order_id = self.order_executor.place_sell_order(symbol, position.quantity, exit_price)
         
@@ -239,6 +245,8 @@ class TradingSystem:
         
         # Get actual execution price
         actual_price = self.order_executor.get_average_price(order_id) or exit_price
+        
+        logger.info(f"[EXIT_FLOW] {symbol} - Order Executor Actual Price: {actual_price:.2f}")
         
         # Close position in portfolio
         closed_position = self.portfolio.close_position(symbol, actual_price, reason)

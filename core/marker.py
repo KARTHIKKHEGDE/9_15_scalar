@@ -26,17 +26,18 @@ class StockMarker:
         self.lock = threading.Lock()
         
         # Store 9:15 candles for marked symbols
-        self.first_candles: Dict[str, Candle] = {}
+        self.marked_candles: Dict[str, Candle] = {}
         
         # Track marking stats
         self.total_evaluated = 0
         self.total_marked = 0
+    
     def get_total_marked_count(self) -> int:
         """
         Get total marked count (including already triggered)
-        Use first_candles dict which keeps all marked stocks even after unmark
+        Use marked_candles dict which keeps all marked stocks even after unmark
         """
-        return len(self.first_candles)  # This never decreases!
+        return len(self.marked_candles)  # This never decreases!
     
     def evaluate_and_mark(self, candle: Candle) -> bool:
         """
@@ -45,8 +46,7 @@ class StockMarker:
         
         Criteria:
         1. Volume > X times 14-day average
-        2. Range > minimum percentage
-        3. Within time window (9:15-9:16)
+        2. Within time window (9:15-9:16)
         """
         self.total_evaluated += 1
         
@@ -72,7 +72,7 @@ class StockMarker:
         # All criteria met - MARK IT!
         with self.lock:
             self.marked_symbols.add(symbol)
-            self.first_candles[symbol] = candle
+            self.marked_candles[symbol] = candle
             self.total_marked += 1
         
         logger.info(f"✓ MARKED: {symbol} | Vol: {volume_ratio:.2f}x | High: {candle.high:.2f}")
@@ -82,9 +82,9 @@ class StockMarker:
         """O(1) check if symbol is marked"""
         return symbol in self.marked_symbols
     
-    def get_first_candle(self, symbol: str) -> Candle:
+    def get_marked_candle(self, symbol: str) -> Candle:
         """Get the 9:15 candle for marked symbol - O(1)"""
-        return self.first_candles.get(symbol)
+        return self.marked_candles.get(symbol)
     
     def get_all_marked_symbols(self) -> Set[str]:
         """Get all marked symbols"""
@@ -96,7 +96,7 @@ class StockMarker:
         Get breakout price level for symbol
         Returns high of 9:15 candle + buffer
         """
-        candle = self.first_candles.get(symbol)
+        candle = self.marked_candles.get(symbol)
         if not candle:
             return 0
         
@@ -105,7 +105,7 @@ class StockMarker:
     
     def get_stoploss_level(self, symbol: str) -> float:
         """Get stop-loss level (open of 9:15 candle)"""
-        candle = self.first_candles.get(symbol)
+        candle = self.marked_candles.get(symbol)
         if not candle:
             return 0
         return candle.open
@@ -127,6 +127,6 @@ class StockMarker:
         """Reset for next trading day"""
         with self.lock:
             self.marked_symbols.clear()
-            self.first_candles.clear()
+            self.marked_candles.clear()
             self.total_evaluated = 0
             self.total_marked = 0

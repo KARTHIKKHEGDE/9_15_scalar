@@ -60,6 +60,8 @@ class TradeLogger:
     
     def log_entry(self, symbol: str, quantity: int, price: float, order_id: str):
         """Log entry trade"""
+        logger.info(f"[TRADE_LOG] {symbol} ENTRY - Price: {price:.2f}, Qty: {quantity}, Value: {quantity * price:.2f}")
+        
         trade = {
             'timestamp': datetime.now().isoformat(),
             'symbol': symbol,
@@ -81,6 +83,9 @@ class TradeLogger:
         """Log exit trade with PNL"""
         pnl = (exit_price - entry_price) * quantity
         pnl_percent = ((exit_price - entry_price) / entry_price) * 100
+        
+        # Debug logging to trace PNL calculation
+        logger.info(f"[TRADE_LOG] {symbol} EXIT - Entry: {entry_price:.2f}, Exit: {exit_price:.2f}, Qty: {quantity}, PNL: {pnl:.2f} ({pnl_percent:.2f}%)")
         
         trade = {
             'timestamp': datetime.now().isoformat(),

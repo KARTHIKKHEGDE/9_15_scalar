@@ -16,7 +16,7 @@ class DryRunOrderExecutor:
     Uses actual market prices from live ticks
     """
     
-    def __init__(self, symbol_manager, config, breakout_engine):  # ADD breakout_engine
+    def __init__(self, symbol_manager, config, breakout_engine):
         self.symbol_manager = symbol_manager
         self.config = config
         self.breakout_engine = breakout_engine  # To fetch current LTP
@@ -48,6 +48,8 @@ class DryRunOrderExecutor:
         
         # Get REAL current market price
         current_ltp = self._get_current_ltp(symbol)
+        
+        logger.info(f"[ORDER_EXEC] {symbol} BUY - Requested Price: {price:.2f if price else 0}, Current LTP: {current_ltp:.2f if current_ltp else 0}")
         
         # Use LTP if available, otherwise fallback to requested price
         execution_price = current_ltp if current_ltp else price
@@ -85,6 +87,8 @@ class DryRunOrderExecutor:
         
         # Get REAL current market price
         current_ltp = self._get_current_ltp(symbol)
+        
+        logger.info(f"[ORDER_EXEC] {symbol} SELL - Requested Price: {price:.2f if price else 0}, Current LTP: {current_ltp:.2f if current_ltp else 0}")
         
         # Use LTP if available, otherwise fallback to requested price
         execution_price = current_ltp if current_ltp else price
@@ -129,7 +133,9 @@ class DryRunOrderExecutor:
         """Get execution price for order"""
         order = self.orders.get(order_id)
         if order and order['status'] == 'COMPLETE':
+            logger.info(f"[ORDER_EXEC] Returning execution price for {order_id}: {order['execution_price']:.2f}")
             return order['execution_price']
+        logger.warning(f"[ORDER_EXEC] Could not get execution price for {order_id}")
         return None
     
     def get_stats(self) -> dict:
