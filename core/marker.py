@@ -69,6 +69,11 @@ class StockMarker:
             logger.debug(f"{symbol}: Volume {volume_ratio:.2f}x (need {self.config['VOLUME_MULTIPLIER']}x)")
             return False
         
+        # Criterion 2: Candle must be GREEN (bullish)
+        if candle.close <= candle.open:
+            logger.debug(f"{symbol}: Red/Flat candle (Open: {candle.open:.2f}, Close: {candle.close:.2f})")
+            return False
+        
         # All criteria met - MARK IT!
         with self.lock:
             self.marked_symbols.add(symbol)

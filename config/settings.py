@@ -7,7 +7,7 @@ from datetime import time
 # ============================================
 # TRADING PARAMETERS
 # ============================================
-MAX_TRADES_PER_DAY = 5
+MAX_TRADES_PER_DAY = 20
 TOTAL_CAPITAL = 100000
 
 # ============================================
