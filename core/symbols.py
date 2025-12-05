@@ -47,6 +47,17 @@ class SymbolManager:
             logger.error(f"Error loading symbols from CSV: {e}")
             raise
     
+    def add_symbol(self, symbol: str):
+        """
+        Add a single symbol programmatically
+        Useful for adding NIFTY FUT or other specific symbols
+        """
+        symbol = symbol.strip().upper()
+        if symbol not in self.symbols:
+            self.symbols.append(symbol)
+            logger.info(f"Added symbol: {symbol}")
+
+    
     def map_tokens(self, exchange: str = "NSE") -> Dict[str, int]:
         """
         Map symbols to instrument tokens using Kite instruments

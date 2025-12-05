@@ -104,7 +104,7 @@ class RiskManager:
         capital_per_stock = self.config['TOTAL_CAPITAL'] / total_marked
         
         # Calculate quantity
-        quantity = int(capital_per_stock / entry_price)
+        quantity = int(capital_per_stock / entry_price)*5
         
         if quantity == 0:
             logger.warning(f"{symbol}: Quantity = 0 (price too high for ₹{capital_per_stock:.2f})")

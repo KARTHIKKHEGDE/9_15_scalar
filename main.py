@@ -24,15 +24,22 @@ from config.settings import *
 from core.symbols import SymbolManager
 from core.historical import HistoricalDataManager
 from core.candles import CandleBuilder
-from core.marker import StockMarker
-from core.breakout import BreakoutEngine
-from core.risk import RiskManager
 from core.portfolio import Portfolio
 from core.orders_live import LiveOrderExecutor
 from core.orders_dryrun import DryRunOrderExecutor
 from core.trade_logger import TradeLogger
 from websocket.ws_manager import WebSocketManager
 from websocket.tick_router import TickRouter
+
+# Import equity-specific modules
+from core.equity import StockMarker, BreakoutEngine, RiskManager
+
+# Import options-specific modules (conditional)
+if OPTIONS_ENABLED:
+    from core.options.options_marker import OptionsMarker
+    from core.options.options_breakout import OptionsBreakoutEngine
+    from core.options.options_chain import OptionsChainManager  # Fixed: was OptionsChainFetcher
+    from core.options.options_risk import OptionsRiskManager
 
 # Setup logging
 logging.basicConfig(
@@ -75,7 +82,16 @@ class TradingSystem:
             'OUTPUT_DIR': OUTPUT_DIR,
             'TRADES_CSV_PREFIX': TRADES_CSV_PREFIX,
             'WS_RECONNECT_DELAY': WS_RECONNECT_DELAY,
-            'WS_RECONNECT_MAX_TRIES': WS_RECONNECT_MAX_TRIES
+            'WS_RECONNECT_MAX_TRIES': WS_RECONNECT_MAX_TRIES,
+            # Options parameters
+            'OPTIONS_ENABLED': OPTIONS_ENABLED,
+            'OPTIONS_NIFTY_FUT_SYMBOL': OPTIONS_NIFTY_FUT_SYMBOL,
+            'OPTIONS_VOLUME_MULTIPLIER': OPTIONS_VOLUME_MULTIPLIER,
+            'OPTIONS_QUANTITY': OPTIONS_QUANTITY,
+            'OPTIONS_TARGET_PERCENT': OPTIONS_TARGET_PERCENT,
+            'OPTIONS_MAX_TRADES_PER_DAY': OPTIONS_MAX_TRADES_PER_DAY,
+            'OPTIONS_EXCHANGE': OPTIONS_EXCHANGE,
+            'OPTIONS_PRODUCT_TYPE': OPTIONS_PRODUCT_TYPE
         }
         
         # Initialize all modules
@@ -116,6 +132,12 @@ class TradingSystem:
         logger.info("Loading symbols...")
         self.symbol_manager = SymbolManager(self.kite)
         self.symbol_manager.load_symbols_from_csv(SYMBOLS_CSV_PATH)
+        
+        # Add NIFTY FUT if options trading is enabled
+        if OPTIONS_ENABLED:
+            self.symbol_manager.add_symbol(OPTIONS_NIFTY_FUT_SYMBOL)
+            logger.info(f"Added NIFTY FUT symbol: {OPTIONS_NIFTY_FUT_SYMBOL}")
+        
         self.symbol_manager.map_tokens(EXCHANGE)
         
         # 2. Historical Data
@@ -151,7 +173,21 @@ class TradingSystem:
         # 10. Tick Router
         self.tick_router = TickRouter(self.candle_builder, self.breakout_engine, self.risk_manager)
         
-        # 11. WebSocket Manager
+        # 11. Options Trading Modules (if enabled)
+        if OPTIONS_ENABLED:
+            logger.info("Initializing options trading modules...")
+            self.options_marker = OptionsMarker(self.config)
+            self.options_chain = OptionsChainManager(self.kite, self.config)  # Fixed: was OptionsChainFetcher
+            self.options_breakout = OptionsBreakoutEngine(self.options_marker, self.options_chain, self.config)
+            self.options_risk = OptionsRiskManager(self.portfolio, self.config)
+            logger.info("✓ Options trading modules initialized")
+        else:
+            self.options_marker = None
+            self.options_breakout = None
+            self.options_chain = None
+            self.options_risk = None
+        
+        # 12. WebSocket Manager
         api_key = os.getenv('API_KEY')
         access_token = os.getenv('ACCESS_TOKEN')
         self.ws_manager = WebSocketManager(api_key, access_token, self.config)
@@ -181,6 +217,14 @@ class TradingSystem:
         
         # WebSocket -> Tick Router
         self.ws_manager.bind_tick_router(self.tick_router.enqueue_ticks)
+        
+        # Options-specific callbacks (if enabled)
+        if OPTIONS_ENABLED and self.options_breakout:
+            def on_options_breakout(direction, strike, option_type, entry_price):
+                self._execute_options_entry(direction, strike, option_type, entry_price)
+            
+            self.options_breakout.set_on_breakout_callback(on_options_breakout)
+            logger.info("✓ Options callbacks configured")
         
         logger.info("✓ Callbacks configured")
     
@@ -263,6 +307,46 @@ class TradingSystem:
             )
         
         logger.info(f"✅ EXIT: {symbol} @ {actual_price:.2f} | Reason: {reason} | PNL: {closed_position.realized_pnl:.2f}")
+    
+    def _execute_options_entry(self, direction: str, strike: int, option_type: str, entry_price: float):
+        """Execute options breakout entry"""
+        
+        if not OPTIONS_ENABLED:
+            return
+        
+        # Check if can take trade
+        if not self.portfolio.can_take_trade(OPTIONS_MAX_TRADES_PER_DAY):
+            logger.warning(f"Max options trades reached ({OPTIONS_MAX_TRADES_PER_DAY})")
+            return
+        
+        # Build option symbol
+        symbol = f"NIFTY{strike}{option_type}"  # e.g., NIFTY24500CE
+        quantity = OPTIONS_QUANTITY
+        
+        logger.info(f"[OPTIONS_ENTRY] {direction} {symbol} @ {entry_price:.2f}")
+        
+        # Place order
+        order_id = self.order_executor.place_buy_order(symbol, quantity, entry_price)
+        
+        if not order_id:
+            logger.error(f"{symbol}: Options entry order failed")
+            return
+        
+        # Get actual execution price
+        actual_price = self.order_executor.get_average_price(order_id) or entry_price
+        
+        # Calculate stop-loss and target
+        target_price = actual_price * (1 + OPTIONS_TARGET_PERCENT / 100)
+        stoploss = actual_price * 0.8  # 20% stop loss
+        
+        # Add to portfolio
+        self.portfolio.add_position(symbol, actual_price, stoploss, quantity)
+        
+        # Log trade
+        self.trade_logger.log_entry(symbol, quantity, actual_price, order_id)
+        
+        logger.info(f"✅ OPTIONS ENTRY: {symbol} x{quantity} @ {actual_price:.2f} | Target: {target_price:.2f}")
+    
     def _fetch_and_update_opening_prices(self):
         """
         Fetch actual opening prices from Kite API and update 9:15 candles.

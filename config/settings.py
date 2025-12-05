@@ -13,7 +13,7 @@ TOTAL_CAPITAL = 100000
 # ============================================
 # STRATEGY PARAMETERS
 # ============================================
-VOLUME_MULTIPLIER = 2.0  # Volume must be X times 14-day avg
+VOLUME_MULTIPLIER = 3  # Volume must be X times 14-day avg
 BREAKOUT_BUFFER_PERCENT = 0.05  # Buffer above high for breakout (to avoid false breakouts)
 
 # ============================================
@@ -30,7 +30,7 @@ PREMARKET_FETCH_TIME = time(9, 0, 0)
 # ============================================
 # EXECUTION MODE
 # ============================================
-DRY_RUN_MODE = True  # False for live trading
+DRY_RUN_MODE = False  # False for live trading
 LOG_LEVEL = "INFO"  # DEBUG, INFO, WARNING, ERROR
 
 # ============================================
@@ -74,3 +74,15 @@ ENABLE_PROFILING = False  # Enable performance profiling
 OUTPUT_DIR = "output"
 LOGS_DIR = "output/logs"
 TRADES_CSV_PREFIX = "trades_"
+
+# ============================================
+# OPTIONS TRADING PARAMETERS
+# ============================================
+OPTIONS_ENABLED = True  # Enable options trading module
+OPTIONS_NIFTY_FUT_SYMBOL = "NIFTY24DECFUT"  # Nearest month NIFTY FUT
+OPTIONS_VOLUME_MULTIPLIER = 1.5  # Mark candle if volume >= current * multiplier
+OPTIONS_QUANTITY = 50  # Lot size (50 for NIFTY options)
+OPTIONS_TARGET_PERCENT = 20  # Target as percentage (20%)
+OPTIONS_MAX_TRADES_PER_DAY = 5  # Max options trades per day
+OPTIONS_EXCHANGE = "NFO"  # Options exchange
+OPTIONS_PRODUCT_TYPE = "MIS"  # MIS or NRML for options
