@@ -71,7 +71,7 @@ class TradingSystem:
         
         # Create config dictionary
         self.config = {
-            'MAX_TRADES_PER_DAY': MAX_TRADES_PER_DAY,
+            'MAX_TRADES_PER_DAY': EQUITY_MAX_TRADES_PER_DAY,
             'TOTAL_CAPITAL': EQUITY_TOTAL_CAPITAL,
             'VOLUME_MULTIPLIER': EQUITY_VOLUME_MULTIPLIER,
             'BREAKOUT_BUFFER_PERCENT': EQUITY_BREAKOUT_BUFFER_PERCENT,
@@ -149,7 +149,7 @@ class TradingSystem:
             else:
                 logger.error("Failed to auto-detect NIFTY FUT symbol")
         
-        self.symbol_manager.map_tokens(EXCHANGE)
+        self.symbol_manager.map_tokens(EQUITY_EXCHANGE)
         
         # 2. Historical Data
         logger.info("Initializing historical data manager...")
@@ -159,7 +159,7 @@ class TradingSystem:
         self.candle_builder = CandleBuilder(self.symbol_manager)
         
         # 4. Portfolio
-        self.portfolio = Portfolio(TOTAL_CAPITAL)
+        self.portfolio = Portfolio(EQUITY_TOTAL_CAPITAL)
         
         # 5. Stock Marker
         self.marker = StockMarker(self.historical_manager, self.config)
@@ -253,8 +253,8 @@ class TradingSystem:
         """Execute breakout entry"""
         
         # Check if can take trade
-        if not self.portfolio.can_take_trade(MAX_TRADES_PER_DAY):
-            logger.warning(f"Max trades reached ({MAX_TRADES_PER_DAY}) - skipping {symbol}")
+        if not self.portfolio.can_take_trade(EQUITY_MAX_TRADES_PER_DAY):
+            logger.warning(f"Max trades reached ({EQUITY_MAX_TRADES_PER_DAY}) - skipping {symbol}")
             return
         
         # Check max loss
