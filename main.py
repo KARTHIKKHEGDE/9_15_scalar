@@ -83,9 +83,8 @@ class TradingSystem:
             'TRADES_CSV_PREFIX': TRADES_CSV_PREFIX,
             'WS_RECONNECT_DELAY': WS_RECONNECT_DELAY,
             'WS_RECONNECT_MAX_TRIES': WS_RECONNECT_MAX_TRIES,
-            # Options parameters
+            # Options parameters (NIFTY_FUT_SYMBOL will be auto-detected later)
             'OPTIONS_ENABLED': OPTIONS_ENABLED,
-            'OPTIONS_NIFTY_FUT_SYMBOL': OPTIONS_NIFTY_FUT_SYMBOL,
             'OPTIONS_VOLUME_MULTIPLIER': OPTIONS_VOLUME_MULTIPLIER,
             'OPTIONS_QUANTITY': OPTIONS_QUANTITY,
             'OPTIONS_TARGET_PERCENT': OPTIONS_TARGET_PERCENT,
@@ -133,10 +132,16 @@ class TradingSystem:
         self.symbol_manager = SymbolManager(self.kite)
         self.symbol_manager.load_symbols_from_csv(SYMBOLS_CSV_PATH)
         
-        # Add NIFTY FUT if options trading is enabled
+        # Auto-detect and add nearest NIFTY FUT if options trading is enabled
         if OPTIONS_ENABLED:
-            self.symbol_manager.add_symbol(OPTIONS_NIFTY_FUT_SYMBOL)
-            logger.info(f"Added NIFTY FUT symbol: {OPTIONS_NIFTY_FUT_SYMBOL}")
+            nifty_fut_symbol = self.symbol_manager.get_nearest_nifty_fut()
+            if nifty_fut_symbol:
+                self.symbol_manager.add_symbol(nifty_fut_symbol)
+                # Update config with auto-detected symbol
+                self.config['OPTIONS_NIFTY_FUT_SYMBOL'] = nifty_fut_symbol
+                logger.info(f"✓ Auto-detected NIFTY FUT: {nifty_fut_symbol}")
+            else:
+                logger.error("Failed to auto-detect NIFTY FUT symbol")
         
         self.symbol_manager.map_tokens(EXCHANGE)
         

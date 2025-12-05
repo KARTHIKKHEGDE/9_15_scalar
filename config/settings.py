@@ -79,7 +79,6 @@ TRADES_CSV_PREFIX = "trades_"
 # OPTIONS TRADING PARAMETERS
 # ============================================
 OPTIONS_ENABLED = True  # Enable options trading module
-OPTIONS_NIFTY_FUT_SYMBOL = "NIFTY24DECFUT"  # Nearest month NIFTY FUT
 OPTIONS_VOLUME_MULTIPLIER = 1.5  # Mark candle if volume >= current * multiplier
 OPTIONS_QUANTITY = 50  # Lot size (50 for NIFTY options)
 OPTIONS_TARGET_PERCENT = 20  # Target as percentage (20%)

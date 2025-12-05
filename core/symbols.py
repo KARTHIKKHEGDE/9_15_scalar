@@ -64,16 +64,29 @@ class SymbolManager:
         Optimized for speed with dictionary lookups
         """
         try:
-            # Fetch all NSE instruments once
+            # Fetch NSE instruments for equities
             logger.info("Fetching NSE instruments...")
-            instruments = self.kite.instruments(exchange)
+            nse_instruments = self.kite.instruments(exchange)
             
-            # Create fast lookup dictionary
+            # Create fast lookup dictionary for equities
             instrument_lookup = {
                 inst['tradingsymbol']: inst 
-                for inst in instruments 
+                for inst in nse_instruments 
                 if inst['instrument_type'] == 'EQ'  # Only equities
             }
+            
+            # Also fetch NFO instruments for NIFTY FUT (if present in symbols)
+            # Check if any symbol looks like NIFTY FUT
+            has_nifty_fut = any('NIFTY' in symbol and 'FUT' in symbol for symbol in self.symbols)
+            
+            if has_nifty_fut:
+                logger.info("Fetching NFO instruments for NIFTY FUT...")
+                nfo_instruments = self.kite.instruments('NFO')
+                
+                # Add NFO futures to lookup
+                for inst in nfo_instruments:
+                    if inst['instrument_type'] == 'FUT':
+                        instrument_lookup[inst['tradingsymbol']] = inst
             
             # Map tokens for our symbols
             mapped_count = 0
@@ -120,3 +133,38 @@ class SymbolManager:
     def get_instrument_data(self, symbol: str) -> dict:
         """Get full instrument data"""
         return self.instrument_map.get(symbol, {})
+    def get_nearest_nifty_fut(self) -> str:
+        """
+        Automatically fetch nearest month NIFTY FUT symbol
+        Returns symbol like 'NIFTY24DECFUT'
+        """
+        try:
+            from datetime import datetime
+            
+            # Fetch all NFO instruments
+            logger.info("Fetching nearest NIFTY FUT symbol...")
+            instruments = self.kite.instruments('NFO')
+            
+            # Filter NIFTY futures
+            nifty_futs = [
+                inst for inst in instruments
+                if inst['name'] == 'NIFTY' and inst['instrument_type'] == 'FUT'
+            ]
+            
+            if not nifty_futs:
+                logger.error("No NIFTY FUT instruments found")
+                return None
+            
+            # Sort by expiry date (nearest first)
+            nifty_futs.sort(key=lambda x: x['expiry'])
+            
+            # Get nearest expiry
+            nearest_fut = nifty_futs[0]
+            symbol = nearest_fut['tradingsymbol']
+            
+            logger.info(f"✓ Nearest NIFTY FUT: {symbol} | Expiry: {nearest_fut['expiry']}")
+            return symbol
+            
+        except Exception as e:
+            logger.error(f"Error fetching nearest NIFTY FUT: {e}")
+            return None
