@@ -20,7 +20,9 @@ import signal
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Import all modules
-from config.settings import *
+from config.settings_common import *
+from config.settings_equity import *
+from config.settings_options import *
 from core.symbols import SymbolManager
 from core.historical import HistoricalDataManager
 from core.candles import CandleBuilder
@@ -70,15 +72,15 @@ class TradingSystem:
         # Create config dictionary
         self.config = {
             'MAX_TRADES_PER_DAY': MAX_TRADES_PER_DAY,
-            'TOTAL_CAPITAL': TOTAL_CAPITAL,
-            'VOLUME_MULTIPLIER': VOLUME_MULTIPLIER,
-            'BREAKOUT_BUFFER_PERCENT': BREAKOUT_BUFFER_PERCENT,
-            'DRY_RUN_MODE': DRY_RUN_MODE,
-            'ORDER_TYPE': ORDER_TYPE,
-            'PRODUCT_TYPE': PRODUCT_TYPE,
-            'EXCHANGE': EXCHANGE,
-            'SLIPPAGE_PERCENT': SLIPPAGE_PERCENT,
-            'MAX_LOSS_PER_DAY': MAX_LOSS_PER_DAY,
+            'TOTAL_CAPITAL': EQUITY_TOTAL_CAPITAL,
+            'VOLUME_MULTIPLIER': EQUITY_VOLUME_MULTIPLIER,
+            'BREAKOUT_BUFFER_PERCENT': EQUITY_BREAKOUT_BUFFER_PERCENT,
+            'DRY_RUN_MODE': EQUITY_DRY_RUN_MODE,
+            'ORDER_TYPE': EQUITY_ORDER_TYPE,
+            'PRODUCT_TYPE': EQUITY_PRODUCT_TYPE,
+            'EXCHANGE': EQUITY_EXCHANGE,
+            'SLIPPAGE_PERCENT': EQUITY_SLIPPAGE_PERCENT,
+            'MAX_LOSS_PER_DAY': EQUITY_MAX_LOSS_PER_DAY,
             'OUTPUT_DIR': OUTPUT_DIR,
             'TRADES_CSV_PREFIX': TRADES_CSV_PREFIX,
             'WS_RECONNECT_DELAY': WS_RECONNECT_DELAY,
@@ -99,9 +101,10 @@ class TradingSystem:
         # Setup callbacks
         self._setup_callbacks()
         
-        logger.info(f"Mode: {'DRY-RUN' if DRY_RUN_MODE else 'LIVE TRADING'}")
-        logger.info(f"Capital: ₹{TOTAL_CAPITAL:,.2f}")
-        logger.info(f"Max Trades: {MAX_TRADES_PER_DAY}")
+        logger.info(f"Equity Mode: {'DRY-RUN' if EQUITY_DRY_RUN_MODE else 'LIVE TRADING'}")
+        logger.info(f"Options Mode: {'DRY-RUN' if OPTIONS_DRY_RUN_MODE else 'LIVE TRADING'}" if OPTIONS_ENABLED else "")
+        logger.info(f"Capital: ₹{EQUITY_TOTAL_CAPITAL:,.2f}")
+        logger.info(f"Max Equity Trades: {EQUITY_MAX_TRADES_PER_DAY}")
     
     def _initialize_kite(self) -> KiteConnect:
         """Initialize Kite connection"""
@@ -164,13 +167,13 @@ class TradingSystem:
         # 7. Risk Manager
         self.risk_manager = RiskManager(self.portfolio, self.symbol_manager, self.config, self.marker)
         
-        # 8. Order Executor
-        if DRY_RUN_MODE:
+        # 8. Order Executor (Equity)
+        if EQUITY_DRY_RUN_MODE:
             self.order_executor = DryRunOrderExecutor(self.symbol_manager, self.config, self.breakout_engine)
-            logger.info("✓ Dry-run order executor initialized")
+            logger.info("✓ Equity dry-run order executor initialized")
         else:
             self.order_executor = LiveOrderExecutor(self.kite, self.symbol_manager, self.config)
-            logger.info("✓ Live order executor initialized")
+            logger.info("✓ Equity live order executor initialized")
         
         # 9. Trade Logger
         self.trade_logger = TradeLogger(self.config)
@@ -185,12 +188,22 @@ class TradingSystem:
             self.options_chain = OptionsChainManager(self.kite, self.config)  # Fixed: was OptionsChainFetcher
             self.options_breakout = OptionsBreakoutEngine(self.options_marker, self.options_chain, self.config)
             self.options_risk = OptionsRiskManager(self.portfolio, self.config)
+            
+            # 11a. Options Order Executor
+            if OPTIONS_DRY_RUN_MODE:
+                self.options_order_executor = DryRunOrderExecutor(self.symbol_manager, self.config, self.options_breakout)
+                logger.info("✓ Options dry-run order executor initialized")
+            else:
+                self.options_order_executor = LiveOrderExecutor(self.kite, self.symbol_manager, self.config)
+                logger.info("✓ Options live order executor initialized")
+            
             logger.info("✓ Options trading modules initialized")
         else:
             self.options_marker = None
             self.options_breakout = None
             self.options_chain = None
             self.options_risk = None
+            self.options_order_executor = None
         
         # 12. WebSocket Manager
         api_key = os.getenv('API_KEY')
@@ -330,15 +343,15 @@ class TradingSystem:
         
         logger.info(f"[OPTIONS_ENTRY] {direction} {symbol} @ {entry_price:.2f}")
         
-        # Place order
-        order_id = self.order_executor.place_buy_order(symbol, quantity, entry_price)
+        # Place order using options-specific executor
+        order_id = self.options_order_executor.place_buy_order(symbol, quantity, entry_price)
         
         if not order_id:
             logger.error(f"{symbol}: Options entry order failed")
             return
         
-        # Get actual execution price
-        actual_price = self.order_executor.get_average_price(order_id) or entry_price
+        # Get actual execution price using options-specific executor
+        actual_price = self.options_order_executor.get_average_price(order_id) or entry_price
         
         # Calculate stop-loss and target
         target_price = actual_price * (1 + OPTIONS_TARGET_PERCENT / 100)

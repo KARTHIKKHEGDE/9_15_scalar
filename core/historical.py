@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Dict
 import numpy as np
 import time
-from config.settings import API_RATE_LIMIT
+from config.settings_common import API_RATE_LIMIT
 
 logger = logging.getLogger(__name__)
 
