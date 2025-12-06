@@ -189,8 +189,8 @@ class TradingSystem:
             logger.info("Initializing options trading modules...")
             self.options_marker = OptionsMarker(self.config)
             self.options_chain = OptionsChainManager(self.kite, self.config)  # Fixed: was OptionsChainFetcher
-            self.options_breakout = OptionsBreakoutEngine(self.options_marker, self.options_chain, self.config)
-            self.options_risk = OptionsRiskManager(self.portfolio, self.config)
+            self.options_breakout = OptionsBreakoutEngine(self.options_marker, self.symbol_manager, self.config, self.candle_builder)
+            self.options_risk = OptionsRiskManager(self.portfolio, self.symbol_manager, self.config)
             
             # 11a. Options Order Executor
             if OPTIONS_DRY_RUN_MODE:
