@@ -18,17 +18,21 @@ class OptionsBreakoutEngine:
     Trigger CALL/PUT signals based on breakout direction
     """
     
-    def __init__(self, marker, symbol_manager, config, candle_builder):
+    def __init__(self, marker, symbol_manager, config, candle_builder, options_chain_manager):
         self.marker = marker
         self.symbol_manager = symbol_manager
         self.config = config
         self.candle_builder = candle_builder
+        self.options_chain = options_chain_manager
         
         # Callback for breakout signal
         self.on_breakout_callback: Optional[Callable] = None
         
         # Track triggered breakouts to avoid duplicates
         self.breakout_triggered: set = set()
+        
+        # Track last prices for dry-run order execution
+        self.last_prices: dict = {}  # symbol -> last_price
         
         # Statistics
         self.breakouts_detected = 0
@@ -45,10 +49,20 @@ class OptionsBreakoutEngine:
     def process_tick(self, tick: dict):
         """
         Process each tick to check for breakouts
+        Only processes NIFTY FUT ticks
         
         Args:
             tick: Tick data with instrument_token, last_price, etc.
         """
+        # Get symbol from tick
+        token = tick.get("instrument_token")
+        symbol = self.symbol_manager.get_symbol(token)
+        
+        # Only process NIFTY FUT ticks
+        nifty_fut_symbol = self.config.get('OPTIONS_NIFTY_FUT_SYMBOL')
+        if symbol != nifty_fut_symbol:
+            return  # Ignore non-NIFTY FUT ticks
+        
         price = tick["last_price"]
         
         # Get all marked candles
@@ -81,7 +95,7 @@ class OptionsBreakoutEngine:
         
         Args:
             option_type: "CALL" or "PUT"
-            breakout_price: Price at which breakout occurred
+            breakout_price: Price at which breakout occurred (NIFTY FUT price)
             marked_candle: The marked candle that was broken
             timestamp: Timestamp of marked candle
         """
@@ -99,11 +113,34 @@ class OptionsBreakoutEngine:
                    f"Marked Candle: {marked_candle.direction} @ {timestamp.strftime('%H:%M')} | "
                    f"High: {marked_candle.high:.2f} | Low: {marked_candle.low:.2f}")
         
-        # Fire callback
+        # Get ATM strike based on current NIFTY FUT price
+        atm_strike = self.options_chain.get_atm_strike(breakout_price)
+        
+        # Determine direction
+        direction = "BULLISH" if option_type == "CALL" else "BEARISH"
+        
+        # Get option symbol
+        option_symbol = self.options_chain.get_option_symbol(atm_strike, option_type)
+        
+        # Get current option price (entry price)
+        entry_price = self.options_chain.get_option_price(option_symbol)
+        
+        if entry_price == 0:
+            logger.warning(f"Could not get option price for {option_symbol}, using fallback")
+            # Fallback: estimate based on typical premium
+            entry_price = 100.0  # Fallback value
+        
+        logger.info(f"📊 OPTIONS SIGNAL: {direction} {option_type} | "
+                   f"Strike: {atm_strike} | Symbol: {option_symbol} | "
+                   f"Entry Price: {entry_price:.2f} | Stop-Loss: {marked_candle.open:.2f}")
+        
+        # Fire callback with correct signature
         if self.on_breakout_callback:
             try:
-                # Pass: option_type, breakout_price, marked_candle
-                self.on_breakout_callback(option_type, breakout_price, marked_candle)
+                # Pass: direction, strike, option_type, entry_price, stoploss
+                # Stop-loss = Opening price of the breakout candle
+                stoploss = marked_candle.open
+                self.on_breakout_callback(direction, atm_strike, option_type, entry_price, stoploss)
             except Exception as e:
                 logger.error(f"Error in breakout callback: {e}", exc_info=True)
         
@@ -119,3 +156,16 @@ class OptionsBreakoutEngine:
             'currently_monitoring': len(self.marker.get_all_marked_candles()),
             'breakouts_triggered': len(self.breakout_triggered)
         }
+    
+    def get_last_price(self, symbol: str) -> Optional[float]:
+        """
+        Get last known price for a symbol
+        Used by DryRunOrderExecutor for realistic price simulation
+        
+        Args:
+            symbol: Symbol to get price for
+            
+        Returns:
+            Last price or None if not available
+        """
+        return self.last_prices.get(symbol)

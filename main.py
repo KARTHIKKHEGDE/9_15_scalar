@@ -181,18 +181,15 @@ class TradingSystem:
         # 9. Trade Logger
         self.trade_logger = TradeLogger(self.config)
         
-        # 10. Tick Router
-        self.tick_router = TickRouter(self.candle_builder, self.breakout_engine, self.risk_manager)
-        
-        # 11. Options Trading Modules (if enabled)
+        # 10. Options Trading Modules (if enabled) - Initialize BEFORE tick router
         if OPTIONS_ENABLED:
             logger.info("Initializing options trading modules...")
             self.options_marker = OptionsMarker(self.config)
-            self.options_chain = OptionsChainManager(self.kite, self.config)  # Fixed: was OptionsChainFetcher
-            self.options_breakout = OptionsBreakoutEngine(self.options_marker, self.symbol_manager, self.config, self.candle_builder)
+            self.options_chain = OptionsChainManager(self.kite, self.config)
+            self.options_breakout = OptionsBreakoutEngine(self.options_marker, self.symbol_manager, self.config, self.candle_builder, self.options_chain)
             self.options_risk = OptionsRiskManager(self.portfolio, self.symbol_manager, self.config)
             
-            # 11a. Options Order Executor
+            # 10a. Options Order Executor
             if OPTIONS_DRY_RUN_MODE:
                 self.options_order_executor = DryRunOrderExecutor(self.symbol_manager, self.config, self.options_breakout)
                 logger.info("✓ Options dry-run order executor initialized")
@@ -208,6 +205,15 @@ class TradingSystem:
             self.options_risk = None
             self.options_order_executor = None
         
+        # 11. Tick Router (initialized AFTER options modules)
+        self.tick_router = TickRouter(
+            self.candle_builder, 
+            self.breakout_engine, 
+            self.risk_manager,
+            options_breakout=self.options_breakout if OPTIONS_ENABLED else None,
+            options_risk=self.options_risk if OPTIONS_ENABLED else None
+        )
+        
         # 12. WebSocket Manager
         api_key = os.getenv('API_KEY')
         access_token = os.getenv('ACCESS_TOKEN')
@@ -218,9 +224,16 @@ class TradingSystem:
     def _setup_callbacks(self):
         """Setup callbacks between modules"""
         
-        # Candle close -> Marker
+        # Candle close -> Marker (Equity + Options)
         def on_candle_close(candle):
+            # Equity marker
             self.marker.evaluate_and_mark(candle)
+            
+            # Options marker (for NIFTY FUT candles only)
+            if OPTIONS_ENABLED and self.options_marker:
+                nifty_fut_symbol = self.config.get('OPTIONS_NIFTY_FUT_SYMBOL')
+                if candle.symbol == nifty_fut_symbol:
+                    self.options_marker.evaluate_and_mark(candle)
         
         self.candle_builder.set_on_candle_close_callback(on_candle_close)
         
@@ -241,10 +254,16 @@ class TradingSystem:
         
         # Options-specific callbacks (if enabled)
         if OPTIONS_ENABLED and self.options_breakout:
-            def on_options_breakout(direction, strike, option_type, entry_price):
-                self._execute_options_entry(direction, strike, option_type, entry_price)
+            def on_options_breakout(direction, strike, option_type, entry_price, stoploss):
+                self._execute_options_entry(direction, strike, option_type, entry_price, stoploss)
             
             self.options_breakout.set_on_breakout_callback(on_options_breakout)
+            
+            # Options risk manager exit callback
+            def on_options_exit(symbol, exit_price, reason):
+                self._execute_exit(symbol, exit_price, reason)
+            
+            self.options_risk.set_on_exit_callback(on_options_exit)
             logger.info("✓ Options callbacks configured")
         
         logger.info("✓ Callbacks configured")
@@ -329,7 +348,7 @@ class TradingSystem:
         
         logger.info(f"✅ EXIT: {symbol} @ {actual_price:.2f} | Reason: {reason} | PNL: {closed_position.realized_pnl:.2f}")
     
-    def _execute_options_entry(self, direction: str, strike: int, option_type: str, entry_price: float):
+    def _execute_options_entry(self, direction: str, strike: int, option_type: str, entry_price: float, stoploss: float):
         """Execute options breakout entry"""
         
         if not OPTIONS_ENABLED:
@@ -340,8 +359,8 @@ class TradingSystem:
             logger.warning(f"Max options trades reached ({OPTIONS_MAX_TRADES_PER_DAY})")
             return
         
-        # Build option symbol
-        symbol = f"NIFTY{strike}{option_type}"  # e.g., NIFTY24500CE
+        # Get correct option symbol with expiry from OptionsChainManager
+        symbol = self.options_chain.get_option_symbol(strike, option_type)
         quantity = OPTIONS_QUANTITY
         
         logger.info(f"[OPTIONS_ENTRY] {direction} {symbol} @ {entry_price:.2f}")
@@ -356,17 +375,20 @@ class TradingSystem:
         # Get actual execution price using options-specific executor
         actual_price = self.options_order_executor.get_average_price(order_id) or entry_price
         
-        # Calculate stop-loss and target
+        # Calculate target
         target_price = actual_price * (1 + OPTIONS_TARGET_PERCENT / 100)
-        stoploss = actual_price * 0.8  # 20% stop loss
         
-        # Add to portfolio
+        logger.info(f"[OPTIONS_ENTRY] Target: {target_price:.2f} | Stop-Loss: {stoploss:.2f}")
+        
+        # Add to portfolio (stoploss is the breakout candle's opening price)
         self.portfolio.add_position(symbol, actual_price, stoploss, quantity)
         
         # Log trade
         self.trade_logger.log_entry(symbol, quantity, actual_price, order_id)
         
         logger.info(f"✅ OPTIONS ENTRY: {symbol} x{quantity} @ {actual_price:.2f} | Target: {target_price:.2f}")
+    
+    
     
     def _fetch_and_update_opening_prices(self):
         """

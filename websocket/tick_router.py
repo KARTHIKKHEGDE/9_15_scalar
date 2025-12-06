@@ -25,10 +25,15 @@ class TickRouter:
     ✔ Non-blocking & scalable
     """
 
-    def __init__(self, candle_builder, breakout_engine, risk_manager):
+    def __init__(self, candle_builder, breakout_engine, risk_manager, 
+                 options_breakout=None, options_risk=None):
         self.candle_builder = candle_builder
         self.breakout_engine = breakout_engine
         self.risk_manager = risk_manager
+        
+        # Options modules (optional)
+        self.options_breakout = options_breakout
+        self.options_risk = options_risk
 
         # Queue for incoming ticks (high capacity)
         self.tick_queue: queue.Queue[List[Dict]] = queue.Queue(maxsize=5000)
@@ -90,14 +95,22 @@ class TickRouter:
     # ---------------------------------------------------------
     def _route_single_tick(self, tick: dict):
         try:
-            # Candle Builder
+            # Candle Builder (for all symbols)
             self.candle_builder.process_tick(tick)
 
-            # Breakout Engine
+            # Equity Breakout Engine
             self.breakout_engine.process_tick(tick)
 
-            # Risk Manager
+            # Equity Risk Manager
             self.risk_manager.process_tick(tick)
+            
+            # Options Breakout Engine (if enabled)
+            if self.options_breakout:
+                self.options_breakout.process_tick(tick)
+            
+            # Options Risk Manager (if enabled)
+            if self.options_risk:
+                self.options_risk.process_tick(tick)
 
         except Exception as e:
             logger.error(f"⚠ Tick routing exception: {e}", exc_info=True)
